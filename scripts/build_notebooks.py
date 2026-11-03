@@ -74,7 +74,7 @@ save(
     ATTACHED_RGB = None  # Path('/kaggle/input/my-rgb/open-eqa-hm3d-frames-v0.tgz') or extracted root
     ALLOW_RGB_DOWNLOAD = False  # enable only inside Kaggle with enough disk
     SAMPLING_REVIEWED = False  # review the sampled and original preview videos before paid extraction
-    RUN_PILOT = False  # up to five images from the same episode; needs Kaggle Secrets/env key
+    RUN_PILOT = False  # first three sampled frames (all if fewer); needs Kaggle Secrets/env key
     PILOT_REVIEWED = False  # set True AFTER reviewing the pilot output and prompt
     RUN_FULL_EXTRACTION = False  # explicitly enable after pilot review; capped persistent budget applies
     SHOW_ANNOTATOR = True
@@ -255,9 +255,13 @@ save(
         display(annotation_widget(BUNDLE, frames, questions))
     """),
         md("""
-    ## Five-frame extraction pilot on the selected episode
+    ## Three-frame extraction preview — inspect inputs and outputs together
     One strict structured request per frame produces a natural caption and a validated graph.
-    Inspect hallucinations, missing states, relation direction and verbosity on up to five images
+    First process only the first three sampled frames (all if fewer than three are available).
+    Display each exact input image beside its caption, object/attribute/state table and readable
+    relationships. Expand the JSON only when needed. A standalone HTML report and the validated
+    pilot records are also saved in WORK/pilot-review for downloading/reopening.
+    Inspect hallucinations, missing states, relation direction and verbosity on these images
     from this same episode. This review is not a separate held-out development environment.
     Spatial `left_of/above` are viewer-relative; `on/inside` require visible evidence; no metric
     location or cross-frame object identity is claimed. Unknown values and empty graphs are allowed.
@@ -271,6 +275,7 @@ save(
     selection = read_json(BUNDLE/'selection.json')
     preprocessing = selection.get('preprocessing', {'synthetic': True})
     pilot_frames = [f for f in frames if f.frame_id in selection['pilot_frame_ids']]
+    assert len(pilot_frames) == min(3, len(frames))
     if SMOKE:
         pilot_records = [Record.model_validate(r) for r in read_json(BUNDLE/'records.json')
                          if r['frame_id'] in {f.frame_id for f in pilot_frames}]
@@ -278,11 +283,22 @@ save(
         if not SAMPLING_REVIEWED:
             raise RuntimeError('Review the sampled/original videos above, then set SAMPLING_REVIEWED=True before paid extraction')
         if not RUN_PILOT:
-            raise RuntimeError('Annotation kit and videos are ready. Set RUN_PILOT=True to authorize up to five image requests.')
+            raise RuntimeError('Annotation kit and videos are ready. Set RUN_PILOT=True to process the three-frame preview (all if fewer).')
         runner = StructuredRunner(CACHE, config['extraction'])
         pilot_records = extract_frames(pilot_frames, BUNDLE, runner, preprocessing=preprocessing)
-    for record in pilot_records:
-        print(record.frame_id, record.extraction.model_dump(mode='json'))
+    from IPython.display import HTML
+    from rvm.review import extraction_review_html
+    preview = extraction_review_html(pilot_frames, pilot_records, BUNDLE,
+                                    model=config['extraction']['model'], synthetic=SMOKE)
+    REVIEW = WORK/'pilot-review'
+    REVIEW.mkdir(parents=True, exist_ok=True)
+    (REVIEW/'extractions.html').write_text('<!doctype html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>Pilot extraction review</title></head><body>' + preview + '</body></html>', encoding='utf-8')
+    atomic_json(REVIEW/'records.json', [r.model_dump(mode='json') for r in pilot_records])
+    display(HTML(preview))
+    print('Review report:', REVIEW/'extractions.html')
+    print('Review all three image/output pairs before setting PILOT_REVIEWED=True. Full extraction remains separately gated.')
     if not SMOKE:
         from rvm.embeddings import CaptionEmbedder
         pilot_embedder = CaptionEmbedder(config['embedding'], cache_folder=WORK/'hf-cache')

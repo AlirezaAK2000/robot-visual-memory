@@ -41,3 +41,16 @@ def test_offline_notebook_execution(name, tmp_path, monkeypatch):
     )
     client.execute()
     assert all(not any(o.output_type == "error" for o in cell.get("outputs", [])) for cell in notebook.cells)
+    if name.startswith("01_"):
+        from rvm.io import read_json
+
+        review = tmp_path / "work/pilot-review"
+        assert len(read_json(review / "records.json")) == 3
+        html = (review / "extractions.html").read_text()
+        assert html.count('<article class="rvm-card">') == 3
+        assert "SYNTHETIC EXAMPLE" in html
+        assert any(
+            "Pilot extraction review" in o.get("data", {}).get("text/html", "")
+            for cell in notebook.cells
+            for o in cell.get("outputs", [])
+        )

@@ -1,5 +1,22 @@
 # Verification actually performed
 
+## Three-frame extraction review — 2026-11-03
+
+The preparation notebook processes only the first three sampled frames for the extraction pilot
+(all if fewer). It displays each input image beside the extracted caption, objects, attributes,
+states and directed relationships, with expandable JSON. It also saves a self-contained HTML
+report and validated records under `WORK/pilot-review`. Full extraction keeps its review gates
+and reuses matching pilot cache entries.
+
+- **77 tests passed, 2 skipped** in the pinned environment (19.33 seconds).
+- Both notebooks executed in synthetic mode. The preparation output includes three review cards
+  and a saved three-record JSON file. Authored synthetic data is clearly labeled, with no API calls.
+- Checks cover output/image pairing even when records arrive out of order, exact image bytes and
+  hashes, HTML escaping, missing outputs, readable relation direction, unknown attributes and empty
+  graphs. Gallery tests verify three pilot IDs and all-frame behavior for a two-frame gallery.
+- Ruff and Git whitespace checks passed. No real RGB data, paid VLM requests or live Kaggle run
+  were used for this validation.
+
 ## GitHub notebook bootstrap — 2026-11-03
 
 The standalone preparation notebook now checks out the public repository directly into

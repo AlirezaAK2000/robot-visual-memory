@@ -28,6 +28,7 @@ src/rvm/schemas.py                       strict schemas and graph validation
 src/rvm/preparation.py                   official acquisition, inspection, deterministic selection
 src/rvm/episode_selection.py             episode inventory, histogram, disjoint windows and MP4 previews
 src/rvm/extraction.py                    strict VLM requests, cache, budgets, raw provenance
+src/rvm/review.py                        input images beside readable pilot captions and graphs
 src/rvm/embeddings.py                    local BGE captions/queries, token checks, optional snapshot
 src/rvm/annotation.py                    contact sheets, widgets, resumable human qrels
 src/rvm/bundle.py, io.py                  integrity, checksums, safe extraction, portable export
@@ -171,8 +172,12 @@ explicit `no-relevant` coverage cases. Silver suggestions, if externally supplie
 `source=silver,status=proposed`; they never satisfy a human ground-truth requirement. No automatic
 silver annotation is enabled. Human labels are never fabricated.
 
-After preview review, set `RUN_PILOT=True` and run the extraction pilot on up to five sampled frames
-from the same episode. Inspect captions, states, object IDs and spatial edge direction. This is image
+After video review, set `SAMPLING_REVIEWED=True` and `RUN_PILOT=True`. The extraction pilot processes
+only the first **three sampled frames** from the same episode (all if fewer are available). Each
+exact input image appears beside its caption, object/attribute/state table and directed relationships,
+with expandable structured JSON. The notebook also saves a self-contained `WORK/pilot-review/extractions.html`
+and `records.json` so you can download and inspect the preview. Empty/unknown outputs are explicit.
+Inspect captions, states, object IDs and spatial edge direction before full extraction. This is image
 review on the evaluation episode, not independent development data. Keep evaluation questions/answers
 out of prompt tuning and label the final experiment exploratory. One request produces two distinct
 fields: a natural-language caption (target ≤180 words) and a frame-local graph. Empty lists/null

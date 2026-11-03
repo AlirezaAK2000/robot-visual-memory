@@ -357,9 +357,9 @@ def prepare_gallery(paths_by_env, qa_rows, environments, config, bundle):
             "frame_sampling": ds.get("frame_sampling", "linspace"),
             "time_axis": "sequence_index (RGB archive has no verified timestamps)",
             "original_frame_counts": {env: len(paths_by_env[env]) for env in environments},
-            "pilot_frame_ids": [f.frame_id for f in frames[:5]]
+            "pilot_frame_ids": [f.frame_id for f in frames[:3]]
             if single_episode
-            else [f.frame_id for f in frames if f.split == "development"][:5],
+            else [f.frame_id for f in frames if f.split == "development"][:3],
             "preprocessing": {
                 "exif_transpose": True,
                 "resize": "aspect-preserving LANCZOS thumbnail",

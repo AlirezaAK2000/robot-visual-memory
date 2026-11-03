@@ -36,6 +36,7 @@
 - `src/rvm/planning.py`
 - `src/rvm/preparation.py`
 - `src/rvm/retrieval.py`
+- `src/rvm/review.py`
 - `src/rvm/schemas.py`
 - `tests/conftest.py`
 - `tests/test_compose.py`
@@ -51,6 +52,7 @@
 - `tests/test_notebooks.py`
 - `tests/test_planning.py`
 - `tests/test_preparation.py`
+- `tests/test_review.py`
 
 Current review/download artifacts (synthetic examples, not real benchmark data):
 
@@ -59,6 +61,7 @@ Current review/download artifacts (synthetic examples, not real benchmark data):
 - `artifacts/verification/single-episode/kaggle-smoke/compact-bundle/review/episode_frame_count_histogram.png`
 - `artifacts/verification/single-episode/kaggle-smoke/compact-bundle/review/sampled_frames.mp4`
 - `artifacts/verification/single-episode/kaggle-smoke/original_episode_preview.mp4`
+- `artifacts/verification/single-episode/kaggle-smoke/pilot-review/extractions.html`
 - `artifacts/verification/single-episode/evaluation-smoke/` (synthetic replay reports)
 
 The real dataset histogram and video are produced by notebook 01 after supplying RGB data in Kaggle.

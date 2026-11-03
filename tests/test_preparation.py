@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from rvm.io import load_config
+from rvm.io import load_config, read_json
 from rvm.preparation import discover_rgb, inspect_images, prepare_gallery, select_environments
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,4 +43,5 @@ def test_selection_reproducible_and_answer_independent(tmp_path):
     assert [f.model_dump() for f in frames] == [f.model_dump() for f in frames2]
     assert all(f.width == 100 and f.height == 50 and f.timestamp is None for f in frames)
     assert [f.sequence_index for f in frames[:2]] == [0, 3]
+    assert read_json(tmp_path / "one/selection.json")["pilot_frame_ids"] == [f.frame_id for f in frames[:2]]
     assert all(r["valid"] == 4 and not r["invalid"] for r in inspect_images(paths))

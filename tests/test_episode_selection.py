@@ -144,6 +144,9 @@ def test_real_gallery_path_caps_a_long_synthetic_sequence(tmp_path):
         discover_rgb(tmp_path / "raw", [env]), qa, [env], config, tmp_path / "bundle"
     )
     assert len(frames) == len({f.frame_id for f in frames}) == 200
+    assert read_json(tmp_path / "bundle/selection.json")["pilot_frame_ids"] == [
+        f.frame_id for f in frames[:3]
+    ]
     assert all(f.split == "evaluation" and f.environment_id == env for f in frames)
     assert questions[0].split == "evaluation"
     windows = read_json(tmp_path / "bundle/sampling_windows.json")
