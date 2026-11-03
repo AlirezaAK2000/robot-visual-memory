@@ -5,8 +5,10 @@ import fcntl
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from tqdm.auto import tqdm
 
 from .io import atomic_json, digest, file_hash, read_json
 from .schemas import Extraction, Record
@@ -167,7 +169,8 @@ class StructuredRunner:
             raise RuntimeError(f"Structured extraction failed after capped retries; inspect cache key {key}")
 
 
-def extract_frames(frames, bundle, runner, *, preprocessing):
+def extract_frames(frames, bundle, runner, *, preprocessing, show_progress=True):
+    frames = list(frames)
     bundle = Path(bundle)
 
     def process(frame):
@@ -188,11 +191,28 @@ def extract_frames(frames, bundle, runner, *, preprocessing):
             identity={"image_sha256": frame.image_sha256, "preprocessing": preprocessing},
         )
         atomic_json(bundle / "provenance/extraction" / f"{frame.frame_id}.json", provenance)
-        return Record(frame_id=frame.frame_id, extraction=result, cache_key=key)
+        return Record(frame_id=frame.frame_id, extraction=result, cache_key=key), provenance
 
-    # Executor.map preserves manifest order. Exceptions stop export; successful checkpoints remain reusable.
-    with ThreadPoolExecutor(max_workers=runner.settings["concurrency"]) as executor:
-        return list(executor.map(process, frames))
+    # Advance on actual completion, even if an earlier frame is slower; retain manifest order.
+    # Exceptions stop export; successful checkpoints remain reusable.
+    records = [None] * len(frames)
+    cached, attempts = 0, 0
+    with (
+        ThreadPoolExecutor(max_workers=runner.settings["concurrency"]) as executor,
+        tqdm(
+            total=len(frames), desc="Extract captions and graphs", unit="frame", disable=not show_progress
+        ) as progress,
+    ):
+        pending = {executor.submit(process, frame): i for i, frame in enumerate(frames)}
+        for future in as_completed(pending):
+            record, provenance = future.result()
+            records[pending[future]] = record
+            hit = provenance.get("cache_hit", False)
+            cached += int(hit)
+            attempts += 0 if hit else len(provenance.get("attempts", []))
+            progress.set_postfix(cached=cached, api_attempts=attempts, refresh=False)
+            progress.update(1)
+    return records
 
 
 def usage_summary(cache):

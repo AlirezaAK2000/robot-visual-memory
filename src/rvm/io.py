@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 import yaml
+from tqdm.auto import tqdm
 
 
 def digest(value):
@@ -19,11 +20,22 @@ def digest(value):
     return hashlib.sha256(value).hexdigest()
 
 
-def file_hash(path, algorithm="sha256"):
+def file_hash(path, algorithm="sha256", *, show_progress=False):
+    path = Path(path)
     h = hashlib.new(algorithm)
-    with Path(path).open("rb") as stream:
+    with (
+        path.open("rb") as stream,
+        tqdm(
+            total=path.stat().st_size,
+            desc=f"Hash {path.name}",
+            unit="B",
+            unit_scale=True,
+            disable=not show_progress,
+        ) as progress,
+    ):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             h.update(block)
+            progress.update(len(block))
     return h.hexdigest()
 
 
@@ -67,7 +79,7 @@ def portable(root, relpath):
     return path
 
 
-def safe_extract(archive, destination, allowed=None, max_bytes=80 * 1024**3):
+def safe_extract(archive, destination, allowed=None, max_bytes=80 * 1024**3, *, show_progress=False):
     """Reject links, traversal, devices, duplicate names and expansion beyond budget.
 
     allowed(name) may select RGB episodes while streaming a full .tgz on Kaggle.
@@ -94,7 +106,9 @@ def safe_extract(archive, destination, allowed=None, max_bytes=80 * 1024**3):
 
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as z:
-            for member in z.infolist():
+            for member in tqdm(
+                z.infolist(), desc="Extract ZIP archive", unit="member", disable=not show_progress
+            ):
                 portable(dest, member.filename)
                 if stat.S_ISLNK(member.external_attr >> 16):
                     raise ValueError("archive links forbidden")
@@ -103,7 +117,9 @@ def safe_extract(archive, destination, allowed=None, max_bytes=80 * 1024**3):
                         copy(member.filename, member.file_size, source)
     else:
         with tarfile.open(archive, "r|*") as tar:
-            for member in tar:
+            for member in tqdm(
+                tar, desc="Scan/extract RGB archive", unit="member", disable=not show_progress
+            ):
                 portable(dest, member.name)
                 if not (member.isfile() or member.isdir()):
                     raise ValueError("archive links/devices forbidden")
@@ -113,17 +129,17 @@ def safe_extract(archive, destination, allowed=None, max_bytes=80 * 1024**3):
     return dest
 
 
-def write_checksums(root):
+def write_checksums(root, *, show_progress=False):
     root = Path(root)
+    paths = [p for p in sorted(root.rglob("*")) if p.is_file() and p.name != "checksums.json"]
     checks = {
         p.relative_to(root).as_posix(): file_hash(p)
-        for p in sorted(root.rglob("*"))
-        if p.is_file() and p.name != "checksums.json"
+        for p in tqdm(paths, desc="Write bundle checksums", unit="file", disable=not show_progress)
     }
     atomic_json(root / "checksums.json", checks)
 
 
-def verify_checksums(root):
+def verify_checksums(root, *, show_progress=False):
     root = Path(root)
     checks = read_json(root / "checksums.json")
     actual = {
@@ -131,12 +147,14 @@ def verify_checksums(root):
     }
     if set(checks) != actual:
         raise ValueError("bundle file list differs from checksums")
-    for name, expected in checks.items():
+    for name, expected in tqdm(
+        checks.items(), desc="Verify bundle checksums", unit="file", disable=not show_progress
+    ):
         if file_hash(portable(root, name)) != expected:
             raise ValueError(f"checksum mismatch: {name}")
 
 
-def export_zip(root, target):
+def export_zip(root, target, *, show_progress=True):
     """Only allowlisted export directories belong in root. Never export a work/cache directory."""
     from .bundle import validate_bundle
 
@@ -167,13 +185,13 @@ def export_zip(root, target):
         p.is_symlink() or p.name in {".env", "credentials", "token", "budget.json"} for p in root.rglob("*")
     ):
         raise ValueError("Symlink or private work/credential file in export root")
-    write_checksums(root)
-    validate_bundle(root)
+    write_checksums(root, show_progress=show_progress)
+    validate_bundle(root, show_progress=show_progress)
+    paths = [p for p in sorted(root.rglob("*")) if p.is_file()]
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                archive.write(path, path.relative_to(root))
+        for path in tqdm(paths, desc="Write compact ZIP", unit="file", disable=not show_progress):
+            archive.write(path, path.relative_to(root))
     with tempfile.TemporaryDirectory() as fresh:
-        safe_extract(target, fresh)
-        validate_bundle(fresh)
+        safe_extract(target, fresh, show_progress=show_progress)
+        validate_bundle(fresh, show_progress=show_progress)
     return target

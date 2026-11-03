@@ -16,18 +16,21 @@ def test_query_preprocessing_and_truncation_without_model_download():
         "dimension": 3,
     }
     seen = []
+    progress_flags = []
 
     def encode(texts, **kwargs):
         seen.extend(texts)
+        progress_flags.append(kwargs["show_progress_bar"])
         assert kwargs["normalize_embeddings"] is True
         return np.array([[1, 0, 0] for _ in texts], dtype=np.float32)
 
     embedder.model = SimpleNamespace(
         tokenizer=SimpleNamespace(encode=lambda text, **kw: text.split()), encode=encode
     )
-    embedder.encode(["a caption"])
+    embedder.encode(["a caption"], show_progress=True)
     embedder.encode(["question"], query=True)
     assert seen == ["a caption", "query prefix: question"]
+    assert progress_flags == [True, False]  # batch captions show progress; single query stays quiet
     with pytest.warns(UserWarning, match="truncation refused"):
         with pytest.raises(ValueError, match="token budget"):
             embedder.encode(["word " * 10])

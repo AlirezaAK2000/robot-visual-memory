@@ -47,7 +47,7 @@ class CaptionEmbedder:
             ]
         }
 
-    def encode(self, texts, *, query=False):
+    def encode(self, texts, *, query=False, show_progress=False):
         prepared = [self.settings["query_instruction"] + t if query else t for t in texts]
         lengths = [len(self.model.tokenizer.encode(t, truncation=False)) for t in prepared]
         over = [i for i, n in enumerate(lengths) if n > self.settings["max_length"]]
@@ -61,7 +61,7 @@ class CaptionEmbedder:
             batch_size=self.settings["batch_size"],
             normalize_embeddings=True,
             convert_to_numpy=True,
-            show_progress_bar=False,
+            show_progress_bar=show_progress,
         )
         vectors = np.asarray(vectors, dtype=np.float32)
         validate_vectors(vectors, len(texts), self.settings["dimension"])
@@ -79,7 +79,7 @@ def validate_vectors(vectors, count, dimension):
         raise ValueError("vectors must be unit-normalized")
 
 
-def embed_bundle(root, settings, *, cache_folder=None):
+def embed_bundle(root, settings, *, cache_folder=None, show_progress=True):
     import torch
     from .schemas import Record
 
@@ -87,7 +87,9 @@ def embed_bundle(root, settings, *, cache_folder=None):
     frames = read_json(root / "frames.json")
     records = {r["frame_id"]: Record.model_validate(r) for r in read_json(root / "records.json")}
     embedder = CaptionEmbedder(settings, cache_folder=cache_folder)
-    vectors = embedder.encode([records[f["frame_id"]].extraction.caption for f in frames])
+    vectors = embedder.encode(
+        [records[f["frame_id"]].extraction.caption for f in frames], show_progress=show_progress
+    )
     np.save(root / "caption_vectors.npy", vectors, allow_pickle=False)
     atomic_json(root / "vector_frame_ids.json", [f["frame_id"] for f in frames])
     atomic_json(

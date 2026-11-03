@@ -98,6 +98,8 @@ def annotation_status(judgments, frames, query_ids, *, synthetic=False):
 
 
 def create_materials(bundle, frames, questions, config):
+    from tqdm.auto import tqdm
+
     bundle = Path(bundle)
     directory = bundle / "annotation"
     directory.mkdir(parents=True, exist_ok=True)
@@ -136,7 +138,9 @@ def create_materials(bundle, frames, questions, config):
         gallery = [f for f in frames if f.environment_id == env]
         env_dir = directory / "review" / env.split("/")[-1]
         env_dir.mkdir(parents=True, exist_ok=True)
-        for page, start in enumerate(range(0, len(gallery), 12)):
+        for page, start in enumerate(
+            tqdm(range(0, len(gallery), 12), desc="Build annotation contact sheets", unit="page")
+        ):
             contact_sheet(gallery[start : start + 12], bundle, title=f"{env} / page {page}").save(
                 env_dir / f"page-{page:03}.jpg"
             )

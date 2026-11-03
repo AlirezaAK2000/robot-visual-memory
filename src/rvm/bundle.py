@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from .annotation import load_qrels, validate_qrels
 from .embeddings import validate_vectors
@@ -10,7 +11,7 @@ from .io import digest, file_hash, portable, read_json, safe_extract, verify_che
 from .schemas import SCHEMA_VERSION, Frame, Question, Record
 
 
-def open_bundle(path, *, destination=None):
+def open_bundle(path, *, destination=None, show_progress=False):
     path = Path(path)
     if path.is_dir():
         return path
@@ -18,14 +19,14 @@ def open_bundle(path, *, destination=None):
         destination = path.with_suffix("")
     if Path(destination).exists() and any(Path(destination).iterdir()):
         raise ValueError("unpack destination must be empty to avoid mixing exports")
-    safe_extract(path, destination)
+    safe_extract(path, destination, show_progress=show_progress)
     return Path(destination)
 
 
-def validate_bundle(root, *, checksums=True):
+def validate_bundle(root, *, checksums=True, show_progress=False):
     root = Path(root)
     if checksums:
-        verify_checksums(root)
+        verify_checksums(root, show_progress=show_progress)
     manifest = read_json(root / "bundle.json")
     if manifest["schema_version"] != SCHEMA_VERSION:
         raise ValueError("unsupported bundle schema")
@@ -39,7 +40,7 @@ def validate_bundle(root, *, checksums=True):
     if len({q.query_id for q in questions}) != len(questions):
         raise ValueError("duplicate question IDs")
     split_map = {}
-    for f in frames:
+    for f in tqdm(frames, desc="Validate gallery images", unit="frame", disable=not show_progress):
         if f.environment_id != f.episode_history:
             raise ValueError("environment/history linkage differs")
         if f.environment_id in split_map and split_map[f.environment_id] != f.split:
@@ -119,7 +120,7 @@ def validate_bundle(root, *, checksums=True):
     }
 
 
-def finalize_bundle(root, *, synthetic=False):
+def finalize_bundle(root, *, synthetic=False, show_progress=False):
     import importlib.metadata
     import platform
     from .annotation import annotation_status
@@ -186,5 +187,5 @@ def finalize_bundle(root, *, synthetic=False):
             ),
         },
     )
-    write_checksums(root)
-    return validate_bundle(root)
+    write_checksums(root, show_progress=show_progress)
+    return validate_bundle(root, show_progress=show_progress)

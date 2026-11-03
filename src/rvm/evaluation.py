@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from .annotation import annotation_status, validate_qrels
 from .io import atomic_json, digest, file_hash, portable_config, read_json
@@ -76,7 +77,17 @@ def verify_frozen(config, path):
     return frozen["hash"]
 
 
-def evaluate(systems, questions, frames, judgments, *, k_values=(1, 3, 5), warm_repeats=2, synthetic=False):
+def evaluate(
+    systems,
+    questions,
+    frames,
+    judgments,
+    *,
+    k_values=(1, 3, 5),
+    warm_repeats=2,
+    synthetic=False,
+    show_progress=False,
+):
     if set(systems) != {"graph", "caption_embedding"}:
         raise ValueError("evaluation must compare exactly graph and caption_embedding")
     if not k_values or min(k_values) < 1 or warm_repeats < 1:
@@ -102,61 +113,69 @@ def evaluate(systems, questions, frames, judgments, *, k_values=(1, 3, 5), warm_
         for q in questions
     }
     rows, runs = [], []
-    for qi, query in enumerate(questions):
-        # Only these three values reach a retriever. Full-gallery ranking gives untruncated MRR.
-        limit = status[query.query_id]["gallery_size"]
-        for name in ["graph", "caption_embedding"] if qi % 2 == 0 else ["caption_embedding", "graph"]:
-            retriever = systems[name]
-            first = None
-            for repeat in range(warm_repeats + 1):
-                result = retriever.retrieve(query.question, query.environment_id, limit)
-                # Isolation violations are fatal, never converted into an empty successful result.
-                validate_results(result, query.environment_id, frame_map, limit)
-                if first is None:
-                    first = result
-                runs.append(
-                    {
+    with tqdm(
+        total=len(questions) * len(systems) * (warm_repeats + 1),
+        desc="Evaluate retrieval",
+        unit="pass",
+        disable=not show_progress,
+    ) as progress:
+        for qi, query in enumerate(questions):
+            # Only these three values reach a retriever. Full-gallery ranking gives untruncated MRR.
+            limit = status[query.query_id]["gallery_size"]
+            for name in ["graph", "caption_embedding"] if qi % 2 == 0 else ["caption_embedding", "graph"]:
+                retriever = systems[name]
+                first = None
+                for repeat in range(warm_repeats + 1):
+                    progress.set_postfix(method=name, pass_number=repeat + 1, refresh=False)
+                    result = retriever.retrieve(query.question, query.environment_id, limit)
+                    # Isolation violations are fatal, never converted into an empty successful result.
+                    validate_results(result, query.environment_id, frame_map, limit)
+                    progress.update(1)
+                    if first is None:
+                        first = result
+                    runs.append(
+                        {
+                            "query_id": query.query_id,
+                            "method": name,
+                            "phase": "first_pass" if repeat == 0 else "warm",
+                            "repeat": repeat,
+                            "ranking": [h.model_dump() for h in result.hits],
+                            **result.diagnostics,
+                        }
+                    )
+                ranking = [h.frame_id for h in first.hits]
+                state = status[query.query_id]
+                for k in k_values:
+                    row = {
                         "query_id": query.query_id,
+                        "environment_id": query.environment_id,
+                        "category": query.category,
                         "method": name,
-                        "phase": "first_pass" if repeat == 0 else "warm",
-                        "repeat": repeat,
-                        "ranking": [h.model_dump() for h in result.hits],
-                        **result.diagnostics,
+                        "k": k,
+                        "judgment_status": state["coverage"],
+                        "gallery_size": limit,
+                        "judged_frames": state["judged"],
+                        "relevant_frames": state["relevant"],
+                        "returned_count": min(k, len(ranking)),
+                        "empty": not ranking,
+                        "error": first.diagnostics.get("error"),
+                        "failure_category": "retrieval_error"
+                        if first.diagnostics.get("error")
+                        else "annotation_pending"
+                        if not state["complete"]
+                        else "coverage_gap"
+                        if not relevant[query.query_id]
+                        else "empty_graph_or_no_match"
+                        if not ranking
+                        else "miss_at_k"
+                        if not any(fid in relevant[query.query_id] for fid in ranking[:k])
+                        else "hit",
                     }
-                )
-            ranking = [h.frame_id for h in first.hits]
-            state = status[query.query_id]
-            for k in k_values:
-                row = {
-                    "query_id": query.query_id,
-                    "environment_id": query.environment_id,
-                    "category": query.category,
-                    "method": name,
-                    "k": k,
-                    "judgment_status": state["coverage"],
-                    "gallery_size": limit,
-                    "judged_frames": state["judged"],
-                    "relevant_frames": state["relevant"],
-                    "returned_count": min(k, len(ranking)),
-                    "empty": not ranking,
-                    "error": first.diagnostics.get("error"),
-                    "failure_category": "retrieval_error"
-                    if first.diagnostics.get("error")
-                    else "annotation_pending"
-                    if not state["complete"]
-                    else "coverage_gap"
-                    if not relevant[query.query_id]
-                    else "empty_graph_or_no_match"
-                    if not ranking
-                    else "miss_at_k"
-                    if not any(fid in relevant[query.query_id] for fid in ranking[:k])
-                    else "hit",
-                }
-                if state["complete"]:
-                    row.update(ranking_metrics(ranking, relevant[query.query_id], k))
-                else:
-                    row.update(dict.fromkeys(["precision", "recall", "mrr", "ndcg"]))
-                rows.append(row)
+                    if state["complete"]:
+                        row.update(ranking_metrics(ranking, relevant[query.query_id], k))
+                    else:
+                        row.update(dict.fromkeys(["precision", "recall", "mrr", "ndcg"]))
+                    rows.append(row)
     return pd.DataFrame(rows), runs, list(status.values())
 
 

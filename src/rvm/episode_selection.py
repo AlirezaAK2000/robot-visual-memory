@@ -60,14 +60,14 @@ def inventory_episodes(source, qa_rows, config):
         names[episode].add(basename)
 
     if source.is_dir():
-        for path in source.rglob("*"):
+        for path in tqdm(source.rglob("*"), desc="Inventory RGB directory", unit="entry"):
             if path.is_file():
                 if path.is_symlink():
                     raise ValueError("Attached extracted RGB inputs must not contain symlinks")
                 add(path.relative_to(source).as_posix())
     elif zipfile.is_zipfile(source):
         with zipfile.ZipFile(source) as archive:
-            for member in tqdm(archive.infolist(), desc="Inventory ZIP members"):
+            for member in tqdm(archive.infolist(), desc="Inventory ZIP members", unit="member"):
                 portable(Path("/inventory-only"), member.filename)
                 if stat.S_ISLNK(member.external_attr >> 16):
                     raise ValueError("Archive links forbidden")
@@ -221,7 +221,9 @@ def make_preview_video(paths, target, *, sequence_indexes=None, fps=6, synthetic
     )
     try:
         writer.send(None)
-        for i, (path, original_index) in enumerate(zip(paths, indexes)):
+        for i, (path, original_index) in enumerate(
+            tqdm(zip(paths, indexes), total=len(paths), desc=f"Encode {target.name}", unit="frame")
+        ):
             with Image.open(path) as image:
                 image = ImageOps.exif_transpose(image).convert("RGB")
                 image = ImageOps.contain(image, (size[0], size[1] - 48))

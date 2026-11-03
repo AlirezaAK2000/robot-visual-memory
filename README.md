@@ -78,6 +78,14 @@ restart the kernel and run again with `UPDATE_REPOSITORY=False`. Changing REPOSI
 that explicit update. The notebook changes its working directory to PROJECT_ROOT before installation.
 
 `WORK` defaults to `/kaggle/working/rvm-single-episode`.
+Time-consuming preparation steps show notebook-friendly progress bars: archive downloads/hashing,
+inventory/extraction, image inspection and duplicate checks, gallery preprocessing, video encoding,
+annotation-kit creation, VLM extraction, caption embedding and final ZIP/checksum validation. The API
+bar counts completed frames, including cache hits, while preserving manifest order; its attempt count
+includes retries for completed frames. Streaming directory/TAR scans show counts/rate/elapsed time
+because their member totals are unknown. The local evaluation notebook also shows bundle validation
+and retrieval-pass progress. Model downloads use Hugging Face's built-in progress reporting.
+
 Use a fresh WORK directory when switching from an older multi-episode export; existing annotations
 must never be silently applied to a different gallery.
 Do not place secrets under WORK or in YAML/notebook cells. Add `OPENAI_API_KEY` in Kaggle Secrets
@@ -102,7 +110,11 @@ The official third-party archive is about 12 GB compressed. Check your Kaggle qu
 archive, extracted images from the one chosen episode, selected copies and optional model snapshot
 all need temporary space.
 Downloads stream with progress, validate content/checksum, and resume only when the host supplies
-a validator and correct byte ranges. The inventory streams through all archive members, without
+a strong ETag/Last-Modified validator and correct identity-encoded byte ranges. Interrupted streams
+retry up to three times. HTTP-compressed bodies are decoded correctly: their wire Content-Length
+is not compared with decoded file size. Legacy or compressed partial checkpoints restart safely
+instead of appending using an invalid offset; no manual removal of the metadata `.part` is needed.
+The inventory streams through all archive members, without
 extracting their images, to count the collected episodes. A second pass extracts only the shortest
 episode's RGB files. An already extracted input is counted in place. Full extraction elsewhere can
 need much more temporary space.

@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import time
 from collections import Counter
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
@@ -24,57 +25,133 @@ MANUAL_ROUTE = (
 
 
 def download(url, target, *, expected_md5=None, min_free_gb=0):
-    """Stream and resume only with a matching ETag/Last-Modified and valid byte range."""
+    """Decode HTTP bodies correctly; resume only validated, identity-encoded partials.
+
+    Content-Length describes encoded wire bytes, while requests.iter_content yields decoded
+    bytes. Ask for identity encoding, but also handle hosts/proxies that still compress.
+    Retry transient/truncated streams at most three times, retaining safe partial checkpoints.
+    """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
-        if expected_md5 and file_hash(target, "md5") != expected_md5:
+        if expected_md5 and file_hash(target, "md5", show_progress=True) != expected_md5:
             raise ValueError(f"bad cached archive checksum: {target}")
         return target
     part = target.with_suffix(target.suffix + ".part")
     metadata = part.with_suffix(part.suffix + ".json")
-    old = read_json(metadata) if metadata.exists() else {}
-    offset = part.stat().st_size if part.exists() and old.get("url") == url else 0
-    validator = old.get("validator")
-    headers = {"Range": f"bytes={offset}-", "If-Range": validator} if offset and validator else {}
-    if not headers:
-        offset = 0
-    with requests.get(url, headers=headers, stream=True, timeout=(20, 180)) as response:
-        response.raise_for_status()
-        if "text/html" in response.headers.get("Content-Type", ""):
-            raise RuntimeError("Host returned an access/login page. " + MANUAL_ROUTE)
-        if response.status_code == 206:
-            if not offset or not response.headers.get("Content-Range", "").startswith(f"bytes {offset}-"):
-                raise ValueError("server returned an invalid resume range")
-        else:
-            offset = 0
-        remaining = int(response.headers.get("Content-Length", 0))
-        if shutil.disk_usage(target.parent).free < max(remaining, min_free_gb * 1024**3):
-            raise OSError("Insufficient disk for download; archive plus extraction need temporary space")
-        atomic_json(
-            metadata,
-            {"url": url, "validator": response.headers.get("ETag") or response.headers.get("Last-Modified")},
+    for attempt in range(3):
+        old = read_json(metadata) if metadata.exists() else {}
+        partial_size = part.stat().st_size if part.exists() else 0
+        validator = old.get("validator")
+        # Legacy checkpoints did not record encoding: their offsets cannot be trusted.
+        resumable = (
+            partial_size and old.get("url") == url and validator and old.get("content_encoding") == "identity"
         )
-        with (
-            part.open("ab" if offset else "wb") as output,
-            tqdm(
-                total=remaining + offset or None,
-                initial=offset,
-                unit="B",
-                unit_scale=True,
-                desc=target.name,
-            ) as progress,
-        ):
-            written = 0
-            for block in response.iter_content(1024**2):
-                if shutil.disk_usage(target.parent).free < len(block) + 128 * 1024**2:
-                    raise OSError("Download stopped before exhausting disk; partial file retained")
-                output.write(block)
-                written += len(block)
-                progress.update(len(block))
-            if remaining and written != remaining:
-                raise ValueError("truncated download; rerun to resume")
-    if expected_md5 and file_hash(part, "md5") != expected_md5:
+        offset = partial_size if resumable else 0
+        if partial_size and not resumable:
+            print(f"Restarting {target.name}: partial has no safe byte-range checkpoint.")
+        headers = {"Accept-Encoding": "identity"}
+        if offset:
+            headers.update({"Range": f"bytes={offset}-", "If-Range": validator})
+            print(f"Resuming {target.name} at byte {offset:,}.")
+        try:
+            with requests.get(url, headers=headers, stream=True, timeout=(20, 180)) as response:
+                encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
+                encoded = encoding not in {"", "identity"}
+                etag = response.headers.get("ETag")
+                current_validator = (
+                    etag if etag and not etag.startswith("W/") else response.headers.get("Last-Modified")
+                )
+                length_header = response.headers.get("Content-Length")
+                wire_length = int(length_header) if length_header is not None else None
+                if wire_length is not None and wire_length < 0:
+                    raise ValueError("negative HTTP Content-Length")
+                range_match = re.fullmatch(
+                    r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", "")
+                )
+                valid_range = False
+                if response.status_code == 206 and range_match:
+                    start, end, total_size = map(int, range_match.groups())
+                    valid_range = (
+                        offset > 0
+                        and start == offset
+                        and start <= end < total_size
+                        and not encoded
+                        and current_validator == validator
+                        and (wire_length is None or wire_length == end - start + 1)
+                    )
+                if response.status_code == 416 or (response.status_code == 206 and not valid_range):
+                    # Do not append an encoded, changed, invalid or already-complete range.
+                    atomic_json(metadata, {"url": url, "content_encoding": None})
+                    raise requests.exceptions.ChunkedEncodingError(
+                        "range rejected; restarting from byte zero"
+                    )
+                response.raise_for_status()
+                if response.status_code not in {200, 206}:
+                    raise ValueError(f"unexpected download HTTP status: {response.status_code}")
+                if "text/html" in response.headers.get("Content-Type", "").lower():
+                    raise RuntimeError("Host returned an access/login page. " + MANUAL_ROUTE)
+                if response.status_code == 200:
+                    if offset:
+                        print(f"Server did not honor the range for {target.name}; restarting safely.")
+                    offset = 0
+                    total_size = None if encoded else wire_length
+                if shutil.disk_usage(target.parent).free < max(wire_length or 0, min_free_gb * 1024**3):
+                    raise OSError(
+                        "Insufficient disk for download; archive plus extraction need temporary space"
+                    )
+                with part.open("ab" if offset else "wb") as output:
+                    # Open/truncate before replacing metadata, so interrupted restarts cannot
+                    # mark old decoded bytes as an identity-encoded checkpoint.
+                    atomic_json(
+                        metadata,
+                        {
+                            "url": url,
+                            "validator": current_validator,
+                            "content_encoding": encoding or "identity",
+                        },
+                    )
+                    with tqdm(
+                        total=total_size,
+                        initial=offset,
+                        unit="B",
+                        unit_scale=True,
+                        desc=target.name + (" (decoded)" if encoded else ""),
+                    ) as progress:
+                        written = 0
+                        for block in response.iter_content(1024**2):
+                            if shutil.disk_usage(target.parent).free < len(block) + 128 * 1024**2:
+                                raise OSError(
+                                    "Download stopped before exhausting disk; partial file retained"
+                                )
+                            output.write(block)
+                            written += len(block)
+                            progress.update(len(block))
+                        # urllib3 counts raw encoded bytes and enforces wire lengths. Never
+                        # compare a compressed Content-Length with decoded output lengths.
+                        wire_read = response.raw.tell() if encoded and hasattr(response, "raw") else None
+                        if (not encoded and total_size is not None and offset + written != total_size) or (
+                            encoded
+                            and wire_length is not None
+                            and wire_read is not None
+                            and wire_read != wire_length
+                        ):
+                            raise requests.exceptions.ChunkedEncodingError("incomplete HTTP body")
+            break
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+            requests.exceptions.ContentDecodingError,
+        ) as exc:
+            if attempt == 2:
+                raise RuntimeError(
+                    f"Download interrupted after 3 attempts: {target.name}. Partial data is retained; "
+                    "rerun to resume when a validated byte range is available, otherwise restart."
+                ) from exc
+            print(f"Download interrupted ({type(exc).__name__}); retrying {target.name} ({attempt + 2}/3).")
+            time.sleep(attempt + 1)
+    if expected_md5 and file_hash(part, "md5", show_progress=True) != expected_md5:
         raise ValueError("archive MD5 differs from official instructions; delete .part and retry")
     part.replace(target)
     metadata.unlink(missing_ok=True)
@@ -158,7 +235,10 @@ def locate_rgb_source(config, work, archive_info):
             raise RuntimeError("Prepared RGB download unavailable. " + MANUAL_ROUTE) from exc
     else:
         raise RuntimeError("Set input_path or explicitly enable Kaggle download. " + MANUAL_ROUTE)
-    if source.suffix in {".tgz", ".gz"} and file_hash(source, "md5") != archive_info["md5"]:
+    if (
+        source.suffix in {".tgz", ".gz"}
+        and file_hash(source, "md5", show_progress=True) != archive_info["md5"]
+    ):
         raise ValueError("attached RGB archive does not match documented MD5")
     return source
 
@@ -171,7 +251,7 @@ def acquire_rgb(config, work, archive_info, environments, *, source=None):
         return source
     dest = work / "rgb"
     marker = dest / "extraction-complete.json"
-    key = digest({"archive": file_hash(source), "environments": environments})
+    key = digest({"archive": file_hash(source, show_progress=True), "environments": environments})
     if marker.exists() and read_json(marker).get("key") == key:
         return dest
 
@@ -180,7 +260,7 @@ def acquire_rgb(config, work, archive_info, environments, *, source=None):
             re.search(r"-rgb\.(png|jpg|jpeg)$", name, re.I)
         )
 
-    safe_extract(source, dest, allowed=allowed)
+    safe_extract(source, dest, allowed=allowed, show_progress=True)
     atomic_json(marker, {"key": key})
     return dest
 
@@ -191,7 +271,7 @@ def natural_key(path):
 
 def discover_rgb(root, environments):
     result = {e: [] for e in environments}
-    for p in Path(root).rglob("*"):
+    for p in tqdm(Path(root).rglob("*"), desc="Find RGB frames", unit="entry"):
         if p.is_file() and re.search(r"-rgb\.(png|jpg|jpeg)$", p.name, re.I):
             name = "/" + p.as_posix()
             for env in environments:
@@ -224,10 +304,13 @@ def inspect_images(paths_by_env):
             except (OSError, ValueError) as exc:
                 invalid.append({"file": path.name, "error": type(exc).__name__})
         # Exact pairwise 64-bit dHash distance <=4; manageable episode histories only.
-        near_pairs = sum(
-            (a ^ b).bit_count() <= 4 for i, a in enumerate(perceptual) for b in perceptual[i + 1 :]
-        )
+        near_pairs = 0
         pairs = len(perceptual) * (len(perceptual) - 1) // 2
+        with tqdm(total=pairs, desc="Check near-duplicate image pairs", unit="pair") as progress:
+            for i, a in enumerate(perceptual):
+                remaining = perceptual[i + 1 :]
+                near_pairs += sum((a ^ b).bit_count() <= 4 for b in remaining)
+                progress.update(len(remaining))
         rows.append(
             {
                 "environment_id": env,
@@ -286,7 +369,7 @@ def prepare_gallery(paths_by_env, qa_rows, environments, config, bundle):
     frames = []
     for env, indexes in plans:
         paths = paths_by_env[env]
-        for idx in indexes:
+        for idx in tqdm(indexes, desc=f"Preprocess {env}", unit="frame"):
             path = paths[int(idx)]
             frame_id = digest({"episode": env, "source_name": path.name})[:32]
             relpath = f"images/{frame_id}.jpg"

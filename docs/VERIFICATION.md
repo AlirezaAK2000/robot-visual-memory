@@ -1,5 +1,32 @@
 # Verification actually performed
 
+## Progress reporting and metadata download repair — 2026-11-03
+
+The notebooks now expose progress for directory/archive inventory and extraction, archive hashing,
+image inspection and pairwise duplicate checks, gallery preprocessing, preview video encoding,
+annotation materials/ZIP creation, concurrent VLM frame extraction, BGE caption batches, provenance
+copying, bundle checksums/validation, compact export and retrieval passes. Unknown member totals
+remain count/rate displays. Concurrent frame completion updates preserve manifest order; cache hits
+and API attempts for completed frames are shown separately.
+
+The reported metadata failure was reproduced against the exact pinned official URL: its gzip
+response declared 93,582 wire bytes while Requests yielded 476,360 decoded bytes. The old code
+compared these different lengths. Downloads now request identity encoding, handle compressed
+responses using wire-length validation, and resume only identity-encoded partials with a valid
+validator/range. Legacy/compressed partials restart safely, transient interruptions retry at most
+three times, and exhausted safe partials remain resumable on the next run.
+
+- **89 tests passed, 2 skipped** (22.84 seconds); Ruff, compileall and whitespace checks passed.
+- Download regressions include an actual local gzip HTTP server using Requests/urllib3, automatic
+  resume after truncation, invalid/encoded/changed/unsatisfiable ranges, legacy partials, and retry
+  exhaustion followed by successful recovery. No original RGB archive was downloaded.
+- A real metadata-first run downloaded and parsed all 1,636 official questions plus the pinned
+  data README. A second run reused the same files and returned identical provenance.
+- Both notebooks executed successfully in explicit synthetic mode, retaining progress-widget outputs
+  and the existing three-frame review/export steps. Tests also verify out-of-order worker progress,
+  ordered results, cache/retry counters, failure propagation and embedding progress selection.
+- No paid model requests, live Kaggle execution or Docker services were used for these checks.
+
 ## Three-frame extraction review — 2026-11-03
 
 The preparation notebook processes only the first three sampled frames for the extraction pilot

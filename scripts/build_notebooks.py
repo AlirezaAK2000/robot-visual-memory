@@ -59,6 +59,11 @@ save(
     Attached archives/extracted datasets are also supported. You need temporary disk for compressed
     data plus extraction; this implementation extracts only selected histories' RGB members.
     Read the source dataset's terms before redistribution; keep imagery/artifacts private as appropriate.
+
+    Slow steps show notebook-friendly progress bars: downloads and archive hashing, inventory and
+    extraction, image checks/preprocessing, video encoding, API frame completion, caption embedding,
+    and export validation/ZIP creation. Streaming archive/directory scans have no known member total,
+    so they show counts, elapsed time and rate rather than an estimated percentage.
     """),
         code("""
     # Configuration — edit this cell before running; no paid requests are enabled by default.
@@ -140,14 +145,18 @@ save(
     ## Metadata first; inventory every collected episode before choosing one
     URLs and the archive MD5 are resolved from the pinned official data README, not invented.
     Access failures stop with the exact Add Input route. No ScanNet, depth, meshes or simulator.
-    The source archive stays on Kaggle. HTTP downloads stream with progress and resume when the
-    host supplies a validator and byte ranges. Archive inventory streams member headers without
+    The source archive stays on Kaggle. HTTP downloads retry interrupted streams up to three times
+    and resume only validated identity-encoded byte ranges. Compressed responses are decoded without
+    comparing wire Content-Length to decoded file size. Legacy/compressed partials automatically
+    restart safely; you do not need to delete the failed metadata partial manually.
+    Archive inventory streams member headers without
     extracting all episodes. It needs a second archive scan to extract only the shortest episode.
     For an attached extracted directory we count the RGB files in place. Missing metadata episodes
     are listed separately: the minimum is over the **collected** episodes, not unseen/missing data.
     """),
         code("""
     import pandas as pd
+    from tqdm.auto import tqdm
     from IPython.display import display, Image as DisplayImage, Video
     from rvm.preparation import (metadata_first, select_environments, locate_rgb_source, acquire_rgb,
                                  discover_rgb, inspect_images, prepare_gallery, contact_sheet)
@@ -246,7 +255,8 @@ save(
     import zipfile
     KIT = WORK/'annotation-kit.zip'
     with zipfile.ZipFile(KIT, 'w', zipfile.ZIP_DEFLATED) as z:
-        for path in sorted(BUNDLE.rglob('*')):
+        kit_paths = [p for p in sorted(BUNDLE.rglob('*')) if p.is_file()]
+        for path in tqdm(kit_paths, desc='Write annotation kit', unit='file'):
             rel = path.relative_to(BUNDLE)
             if path.is_file() and (rel.parts[0] in {'images', 'annotation', 'review'} or rel.as_posix() in {'frames.json','questions.json','selection.json','sampling_windows.json'}):
                 z.write(path, rel)
@@ -267,6 +277,8 @@ save(
     location or cross-frame object identity is claimed. Unknown values and empty graphs are allowed.
     Changing prompt/model/preprocessing invalidates matching cache entries. Actual usage and failed
     attempts are logged; the guard limits request attempts and reserved output tokens, not currency.
+    The extraction bar advances as frames finish, including cache hits. Its API-attempt counter covers
+    completed frames (including their retries), so it is not a live count of in-flight requests.
     """),
         code("""
     from rvm.extraction import StructuredRunner, extract_frames, EXTRACTION_PROMPT, usage_summary
@@ -285,7 +297,7 @@ save(
         if not RUN_PILOT:
             raise RuntimeError('Annotation kit and videos are ready. Set RUN_PILOT=True to process the three-frame preview (all if fewer).')
         runner = StructuredRunner(CACHE, config['extraction'])
-        pilot_records = extract_frames(pilot_frames, BUNDLE, runner, preprocessing=preprocessing)
+        pilot_records = extract_frames(pilot_frames, BUNDLE, runner, preprocessing=preprocessing, show_progress=True)
     from IPython.display import HTML
     from rvm.review import extraction_review_html
     preview = extraction_review_html(pilot_frames, pilot_records, BUNDLE,
@@ -301,8 +313,9 @@ save(
     print('Review all three image/output pairs before setting PILOT_REVIEWED=True. Full extraction remains separately gated.')
     if not SMOKE:
         from rvm.embeddings import CaptionEmbedder
+        print('Loading BGE model; Hugging Face displays download progress for uncached files...')
         pilot_embedder = CaptionEmbedder(config['embedding'], cache_folder=WORK/'hf-cache')
-        pilot_embedder.encode([r.extraction.caption for r in pilot_records])
+        pilot_embedder.encode([r.extraction.caption for r in pilot_records], show_progress=True)
         print('Pilot caption tokens:', [len(pilot_embedder.model.tokenizer.encode(r.extraction.caption)) for r in pilot_records])
     print('Pilot checkpoint: review these records before enabling full extraction')
     """),
@@ -320,11 +333,11 @@ save(
         if not (PILOT_REVIEWED and RUN_FULL_EXTRACTION):
             raise RuntimeError('Review the extraction pilot, then explicitly enable PILOT_REVIEWED and RUN_FULL_EXTRACTION')
         freeze_development(config, BUNDLE/'development-freeze.json', development_environment=None)
-        records = extract_frames(frames, BUNDLE, runner, preprocessing=preprocessing)
+        records = extract_frames(frames, BUNDLE, runner, preprocessing=preprocessing, show_progress=True)
         atomic_json(BUNDLE/'records.json', [r.model_dump(mode='json') for r in records])
         atomic_json(BUNDLE/'provenance/extraction-usage.json', usage_summary(CACHE))
         # All attempt records, including failed validation responses; never request headers/API keys.
-        for attempt in (CACHE/'attempts').glob('*.json'):
+        for attempt in tqdm(list((CACHE/'attempts').glob('*.json')), desc='Save request provenance', unit='attempt'):
             atomic_json(BUNDLE/'provenance/attempts'/attempt.name, read_json(attempt))
     print('Extraction checkpoint:', len(read_json(BUNDLE/'records.json')), 'validated frame records')
     """),
@@ -339,7 +352,7 @@ save(
         code("""
     from rvm.embeddings import embed_bundle
     if not SMOKE:
-        vectors = embed_bundle(BUNDLE, config['embedding'], cache_folder=WORK/'hf-cache')
+        vectors = embed_bundle(BUNDLE, config['embedding'], cache_folder=WORK/'hf-cache', show_progress=True)
         print('Embedding checkpoint:', vectors.shape, vectors.dtype)
     else:
         print('Synthetic fixture vectors retained; no model inference')
@@ -354,9 +367,9 @@ save(
     """),
         code("""
     from rvm.bundle import finalize_bundle
-    validated = finalize_bundle(BUNDLE, synthetic=SMOKE)
+    validated = finalize_bundle(BUNDLE, synthetic=SMOKE, show_progress=True)
     display(pd.DataFrame(read_json(BUNDLE/'annotation/status.json')))
-    ZIP = export_zip(BUNDLE, WORK/'robot-visual-memory-compact.zip')
+    ZIP = export_zip(BUNDLE, WORK/'robot-visual-memory-compact.zip', show_progress=True)
     print('Export checkpoint:', ZIP, round(ZIP.stat().st_size/1024**2, 2), 'MiB')
     print('Status:', validated['manifest']['benchmark_status'])
     print('ZIP was extracted and revalidated in a fresh temporary directory. Download only this compact ZIP.')
@@ -411,8 +424,8 @@ save(
     if SMOKE:
         from rvm.fixture import create_single_episode_fixture
         BUNDLE_PATH = create_single_episode_fixture(OUTPUT/'synthetic-fixture', config_path=ROOT/'config.example.yaml')
-    BUNDLE = open_bundle(BUNDLE_PATH)
-    bundle = validate_bundle(BUNDLE)
+    BUNDLE = open_bundle(BUNDLE_PATH, show_progress=True)
+    bundle = validate_bundle(BUNDLE, show_progress=True)
     if bundle['manifest']['synthetic'] and not SMOKE:
         raise ValueError('Synthetic fixture is forbidden in real evaluation mode')
     frames = bundle['frames']
@@ -452,6 +465,7 @@ save(
         driver, qdrant = clients()
         display(verify_import(BUNDLE, driver, qdrant, config['retrieval']['collection']))
         start = time.perf_counter()
+        print('Loading BGE model; Hugging Face displays download progress for uncached files...')
         embedder = CaptionEmbedder(bundle['embedding'], snapshot=LOCAL_SNAPSHOT,
                                    cache_folder=ROOT/'artifacts/hf-cache')
         model_load_seconds = time.perf_counter()-start
@@ -499,7 +513,8 @@ save(
     planning_usage_before = usage_summary(OUTPUT/'plan-cache')
     table, runs, status = evaluate(systems, questions, frames, judgments,
                                    k_values=config['retrieval']['k_values'],
-                                   warm_repeats=config['retrieval']['warm_repeats'], synthetic=SMOKE)
+                                   warm_repeats=config['retrieval']['warm_repeats'], synthetic=SMOKE,
+                                   show_progress=True)
     aggregate, by_category, diagnostics, paired = report_results(table, runs, status, OUTPUT, provenance={
         'synthetic': SMOKE, 'evaluation_scope': evaluation_scope, 'freeze_hash': freeze_hash, 'config_hash': digest(config),
         'bundle_manifest_hash': file_hash(BUNDLE/'bundle.json'), 'bundle_checksums_hash': file_hash(BUNDLE/'checksums.json'),

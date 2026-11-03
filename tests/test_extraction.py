@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from rvm.extraction import RequestBudget, StructuredRunner, usage_delta, usage_summary
-from rvm.schemas import Extraction
+from rvm.extraction import RequestBudget, StructuredRunner, extract_frames, usage_delta, usage_summary
+from rvm.schemas import Extraction, Frame
 
 
 SETTINGS = {
@@ -82,3 +82,84 @@ def test_failed_validation_raw_response_preserved(tmp_path):
 
     event = read_json(next((tmp_path / "attempts").glob("*.json")))
     assert event["error"] == "ValidationError" and event["raw_response"] is not None
+
+
+def test_frame_progress_tracks_completions_without_reordering_results(fixture_bundle, monkeypatch):
+    import threading
+    from rvm.io import read_json
+
+    frames = [Frame.model_validate(f) for f in read_json(fixture_bundle / "frames.json")][:3]
+    first_released = threading.Event()
+    updates, counters = [], []
+
+    class Progress:
+        def __init__(self, **kwargs):
+            assert kwargs["total"] == 3 and not kwargs["disable"]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def update(self, count):
+            updates.append(count)
+            # A later frame must advance the UI while the first is still waiting.
+            first_released.set()
+
+        def set_postfix(self, **kwargs):
+            counters.append(kwargs)
+
+    class Runner:
+        settings = {"concurrency": 2}
+
+        def run(self, *, identity, **kwargs):
+            index = next(i for i, f in enumerate(frames) if f.image_sha256 == identity["image_sha256"])
+            if index == 0:
+                assert first_released.wait(timeout=5), (
+                    "Progress waited for manifest order instead of completion"
+                )
+            result = Extraction(caption=f"Synthetic frame {index}", objects=[], relationships=[])
+            return (
+                result,
+                f"key-{index}",
+                {"cache_hit": index == 1, "attempts": [{}] * (2 if index == 0 else 1)},
+            )
+
+    monkeypatch.setattr("rvm.extraction.tqdm", Progress)
+    records = extract_frames(frames, fixture_bundle, Runner(), preprocessing={}, show_progress=True)
+    assert [r.frame_id for r in records] == [f.frame_id for f in frames]
+    assert [r.extraction.caption for r in records] == [f"Synthetic frame {i}" for i in range(3)]
+    assert updates == [1, 1, 1]
+    assert counters[-1]["cached"] == 1 and counters[-1]["api_attempts"] == 3
+
+
+def test_failed_frame_does_not_count_as_completed_progress(fixture_bundle, monkeypatch):
+    from rvm.io import read_json
+
+    frames = [Frame.model_validate(f) for f in read_json(fixture_bundle / "frames.json")][:1]
+    updates = []
+
+    class Runner:
+        settings = {"concurrency": 1}
+
+        def run(self, **kwargs):
+            raise RuntimeError("synthetic failure")
+
+    class Progress:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def update(self, count):
+            updates.append(count)
+
+    monkeypatch.setattr("rvm.extraction.tqdm", Progress)
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        extract_frames(frames, fixture_bundle, Runner(), preprocessing={})
+    assert not updates
