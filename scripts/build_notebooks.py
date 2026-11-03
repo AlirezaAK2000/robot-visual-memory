@@ -52,8 +52,10 @@ save(
     frames. When it has 200 or fewer frames, keep every frame. Selection never reads QA answers.
     A single-episode pilot has no held-out environment; review and results are labeled accordingly.
 
-    Upload `rvm-source.zip` as a private Kaggle Dataset, attach it, enable Internet, and optionally
-    select a GPU. The RGB archive is documented in OpenEQA's official data README (about 12 GB).
+    Upload this notebook to Kaggle, enable Internet, and optionally select a GPU. The bootstrap
+    checks out the GitHub project directly into `/kaggle/working`, with no nested repository folder.
+    No source ZIP or source Dataset attachment is needed. The RGB archive is documented in
+    OpenEQA's official data README (about 12 GB).
     Attached archives/extracted datasets are also supported. You need temporary disk for compressed
     data plus extraction; this implementation extracts only selected histories' RGB members.
     Read the source dataset's terms before redistribution; keep imagery/artifacts private as appropriate.
@@ -63,9 +65,12 @@ save(
     import os
     from pathlib import Path
     SMOKE = os.getenv("RVM_NOTEBOOK_SMOKE") == "1"  # synthetic offline CI only, never benchmark results
-    WORK = Path(os.getenv("RVM_WORK", "/kaggle/working/rvm-single-episode" if Path("/kaggle").exists() else "artifacts/kaggle-single-episode"))
-    SOURCE_ZIP = None  # e.g. Path('/kaggle/input/rvm-source/rvm-source.zip'); auto-discover if None
-    CONFIG_FILE = None  # defaults to source/config.example.yaml; optional attached edited YAML
+    PROJECT_ROOT = Path('/kaggle/working') if Path('/kaggle').exists() else Path.cwd()
+    REPOSITORY_URL = 'https://github.com/AlirezaAK2000/robot-visual-memory.git'
+    REPOSITORY_REF = 'main'  # a branch, tag, or commit SHA; resolved commit is recorded in provenance
+    UPDATE_REPOSITORY = False  # reruns reuse the checkout; True explicitly fetches the ref again
+    WORK = Path(os.getenv("RVM_WORK", str(PROJECT_ROOT/'rvm-single-episode') if Path('/kaggle').exists() else str(PROJECT_ROOT/'artifacts/kaggle-single-episode'))).resolve()
+    CONFIG_FILE = None  # defaults to PROJECT_ROOT/config.example.yaml; optional attached edited YAML
     ATTACHED_RGB = None  # Path('/kaggle/input/my-rgb/open-eqa-hm3d-frames-v0.tgz') or extracted root
     ALLOW_RGB_DOWNLOAD = False  # enable only inside Kaggle with enough disk
     SAMPLING_REVIEWED = False  # review the sampled and original preview videos before paid extraction
@@ -74,35 +79,44 @@ save(
     RUN_FULL_EXTRACTION = False  # explicitly enable after pilot review; capped persistent budget applies
     SHOW_ANNOTATOR = True
     EXPORT_OFFLINE_MODEL = False
-    WORK.mkdir(parents=True, exist_ok=True)
     print('Mode:', 'SYNTHETIC SMOKE — NOT BENCHMARK' if SMOKE else 'real OpenEQA preparation')
     """),
         md("""
     ## Bootstrap
-    Install the reusable package, not copied notebook-only logic. Kaggle keeps its supplied PyTorch
+    Clone/check out the project **directly in `/kaggle/working`**. Project paths such as `src/`,
+    `notebooks/` and `config.example.yaml` sit immediately under that directory. If Kaggle has already
+    created notebook/output files, the bootstrap uses Git init/fetch/checkout in place. It never
+    forces overwrites or deletes outputs. Reruns keep the first resolved commit unless you explicitly
+    set UPDATE_REPOSITORY=True; updates refuse tracked local edits and conflicting untracked files.
+    Repository access must be available from Kaggle; public access works without a GitHub token.
+    The actual commit SHA is saved in export provenance.
+
+    Install the reusable package. Kaggle keeps its supplied PyTorch
     GPU runtime; exact realized package versions are recorded in the export. On CPU the same code runs.
     Never put a key in a notebook cell or export directory. Reruns use the same WORK directory for caches.
     """),
-        code("""
-    import subprocess, sys, zipfile
-    candidates = [Path.cwd(), Path.cwd().parent]
-    SOURCE = next((p for p in candidates if (p/'pyproject.toml').exists()), None)
-    if SOURCE is None:
-        if SOURCE_ZIP is None:
-            archives = list(Path('/kaggle/input').rglob('rvm-source.zip'))
-            if len(archives) != 1:
-                raise RuntimeError('Attach exactly one rvm-source.zip or set SOURCE_ZIP')
-            SOURCE_ZIP = archives[0]
-        source_dir = WORK / 'source-code'
-        source_dir.mkdir(exist_ok=True)
-        with zipfile.ZipFile(SOURCE_ZIP) as z:
-            for member in z.infolist():
-                target = (source_dir/member.filename).resolve()
-                if not target.is_relative_to(source_dir.resolve()) or (member.external_attr >> 16) & 0o170000 == 0o120000:
-                    raise ValueError('Unsafe source ZIP')
-            z.extractall(source_dir)
-        SOURCE = source_dir/'robot-visual-memory'
+        code(
+            (ROOT / "scripts/kaggle_bootstrap.py").read_text()
+            + dedent("""
+    import sys
+    if SMOKE:
+        # Offline verification explicitly uses the local source tree and never clones/downloads.
+        SOURCE = next((p for p in [Path.cwd(), Path.cwd().parent] if (p/'pyproject.toml').exists()), None)
+        if SOURCE is None:
+            raise RuntimeError('Synthetic smoke mode requires the local project root')
+        source_provenance = {'synthetic_smoke': True, 'repository_url': REPOSITORY_URL, 'commit': None}
+    else:
+        SOURCE = PROJECT_ROOT.resolve()
+        source_provenance = checkout_repository(REPOSITORY_URL, REPOSITORY_REF, SOURCE, update=UPDATE_REPOSITORY)
+        if (source_provenance['previous_commit'] is not None
+            and source_provenance['previous_commit'] != source_provenance['commit']
+            and any(name == 'rvm' or name.startswith('rvm.') for name in sys.modules)):
+            raise RuntimeError('Repository updated. Restart the kernel, set UPDATE_REPOSITORY=False, and run in order to load the new code.')
     SOURCE = SOURCE.resolve()
+    os.chdir(SOURCE)
+    WORK.mkdir(parents=True, exist_ok=True)
+    print('Project root:', SOURCE)
+    print('Repository commit:', source_provenance['commit'], 'reused:', source_provenance.get('reused_checkout', False))
     if not SMOKE:
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '-r', 'requirements-kaggle.txt'], cwd=SOURCE)
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '-e', '.'], cwd=SOURCE)
@@ -118,8 +132,10 @@ save(
     config['dataset']['allow_download'] = ALLOW_RGB_DOWNLOAD
     config['embedding']['export_snapshot'] = EXPORT_OFFLINE_MODEL
     BUNDLE = WORK/'compact-bundle'
+    atomic_json(BUNDLE/'provenance/source-code.json', source_provenance)
     print('Source ready; bundle:', BUNDLE)
-    """),
+    """)
+        ),
         md("""
     ## Metadata first; inventory every collected episode before choosing one
     URLs and the archive MD5 are resolved from the pinned official data README, not invented.

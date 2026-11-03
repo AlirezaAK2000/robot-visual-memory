@@ -18,6 +18,7 @@
 - `requirements-local.txt`
 - `scripts/build_notebooks.py`
 - `scripts/import_bundle.py`
+- `scripts/kaggle_bootstrap.py`
 - `scripts/kaggle_lock.py`
 - `scripts/verify_notebooks.py`
 - `src/rvm/__init__.py`
@@ -45,6 +46,7 @@
 - `tests/test_extraction.py`
 - `tests/test_freeze.py`
 - `tests/test_integrity.py`
+- `tests/test_kaggle_bootstrap.py`
 - `tests/test_metrics.py`
 - `tests/test_notebooks.py`
 - `tests/test_planning.py`
@@ -52,7 +54,6 @@
 
 Current review/download artifacts (synthetic examples, not real benchmark data):
 
-- `artifacts/rvm-source.zip`
 - `artifacts/verification/single-episode/01_prepare_openeqa_kaggle.synthetic-executed.ipynb`
 - `artifacts/verification/single-episode/02_evaluate_retrieval_local.synthetic-executed.ipynb`
 - `artifacts/verification/single-episode/kaggle-smoke/compact-bundle/review/episode_frame_count_histogram.png`

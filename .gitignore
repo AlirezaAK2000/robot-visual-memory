@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 artifacts/
+rvm-single-episode/
 data/
 results/
 dist/

@@ -37,28 +37,46 @@ src/rvm/evaluation.py                    metrics, isolation checks, reports and 
 src/rvm/fixture.py, cli.py                synthetic fixture and command-line utilities
 scripts/import_bundle.py                 import CLI wrapper
 scripts/build_notebooks.py               reviewable notebook cell sources
+scripts/kaggle_bootstrap.py              embedded GitHub checkout into /kaggle/working itself
 scripts/kaggle_lock.py, verify_notebooks.py lock derivation and retained synthetic execution
 tests/                                  offline, notebook, optional DB and real-bundle checks
 docs/SOURCES.md                          primary documentation and pinned design decisions
 docs/VERIFICATION.md                     checks actually run and their limitations
 ```
 
-## 1. Prepare the source and run on Kaggle
+## 1. Upload the notebook and run on Kaggle
 
-Use Python 3.11 or 3.12. Create an isolated environment locally for utilities/notebook execution:
+Download/import `notebooks/01_prepare_openeqa_kaggle.ipynb` from this GitHub repository into Kaggle.
+Enable Internet; optionally select a GPU. A CPU works more slowly. No project ZIP, source Dataset
+attachment or local Python setup is needed for this preparation phase.
 
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-local.txt
-python -m pip install --no-deps -e .
-rvm source-zip /tmp/rvm-source.zip
+The notebook clones/checks out `https://github.com/AlirezaAK2000/robot-visual-memory.git` **directly
+into `/kaggle/working`**, without creating a `robot-visual-memory` subfolder:
+
+```text
+/kaggle/working/
+  .git/
+  config.example.yaml
+  pyproject.toml
+  requirements-kaggle.txt
+  src/
+  notebooks/
+  scripts/
+  rvm-single-episode/       # generated data, previews and checkpoints
 ```
 
-Create a **private Kaggle Dataset** from `/tmp/rvm-source.zip` and attach it to a new Kaggle
-notebook. Import `notebooks/01_prepare_openeqa_kaggle.ipynb` into Kaggle. Enable Internet;
-optionally enable a GPU. A CPU works more slowly. The bootstrap auto-discovers one attached
-`rvm-source.zip`, or set `SOURCE_ZIP` explicitly. `WORK` defaults to `/kaggle/working/rvm-single-episode`.
+The Git bootstrap is embedded in the uploaded notebook and uses only the standard library, so it
+works before any project modules exist. It uses in-place Git init/fetch/checkout to accommodate
+Kaggle's existing notebook/output files. It never forces overwrites, resets files, or deletes outputs.
+The default `REPOSITORY_REF='main'` can instead be a tag or commit SHA. The resolved commit is recorded
+in `provenance/source-code.json`. Public repository access works without a GitHub token.
+
+Reruns reuse the checked-out commit. Set `UPDATE_REPOSITORY=True` to fetch the requested ref explicitly;
+updates refuse tracked local edits or conflicting untracked files. If imported code was updated,
+restart the kernel and run again with `UPDATE_REPOSITORY=False`. Changing REPOSITORY_REF also requires
+that explicit update. The notebook changes its working directory to PROJECT_ROOT before installation.
+
+`WORK` defaults to `/kaggle/working/rvm-single-episode`.
 Use a fresh WORK directory when switching from an older multi-episode export; existing annotations
 must never be silently applied to a different gallery.
 Do not place secrets under WORK or in YAML/notebook cells. Add `OPENAI_API_KEY` in Kaggle Secrets
@@ -198,6 +216,15 @@ Finish them in Kaggle and re-export, or save a completed human CSV separately on
 QRELS_OVERRIDE in notebook 02. Keep the immutable exported checksums intact.
 
 ## 3. Start databases and import the compact bundle
+
+On your laptop, use Python 3.11 or 3.12. From the repository root, install the local environment:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-local.txt
+python -m pip install --no-deps -e .
+```
 
 Install Docker with Compose v2. The deployment pins Neo4j Community 5.26.12, Qdrant 1.16.1, and
 official Neo4j MCP 2.0.0. Docker runtime validation is conditional on Docker availability; see the

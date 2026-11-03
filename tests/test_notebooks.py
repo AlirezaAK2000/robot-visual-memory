@@ -18,6 +18,16 @@ def test_notebook_schema_and_python_cells(name):
             assert cell.execution_count is None  # shipped source notebooks make no execution claim
 
 
+def test_kaggle_notebook_embeds_current_flat_git_bootstrap():
+    notebook = nbformat.read(ROOT / "notebooks/01_prepare_openeqa_kaggle.ipynb", as_version=4)
+    sources = "\n".join(c.source for c in notebook.cells if c.cell_type == "code")
+    assert (ROOT / "scripts/kaggle_bootstrap.py").read_text().strip() in sources
+    assert "Path('/kaggle/working')" in sources
+    assert "checkout_repository(REPOSITORY_URL, REPOSITORY_REF, SOURCE" in sources
+    assert "os.chdir(SOURCE)" in sources
+    assert "SOURCE_ZIP" not in sources and "extractall" not in sources
+
+
 @pytest.mark.parametrize("name", ["01_prepare_openeqa_kaggle.ipynb", "02_evaluate_retrieval_local.ipynb"])
 def test_offline_notebook_execution(name, tmp_path, monkeypatch):
     from nbclient import NotebookClient

@@ -1,5 +1,22 @@
 # Verification actually performed
 
+## GitHub notebook bootstrap — 2026-11-03
+
+The standalone preparation notebook now checks out the public repository directly into
+`/kaggle/working`; uploading a project source ZIP is no longer required. Generated data remains
+in `/kaggle/working/rvm-single-episode`. The compact selected-data export is still a ZIP.
+
+- **75 tests passed, 2 skipped** in the pinned Python environment (17.34 seconds).
+- Local Git fixtures verify a nonempty flat checkout, notebook/checkpoint preservation, explicit
+  updates, same-commit reruns, tracked-edit and untracked-collision protection, origin checks,
+  tags and full commit SHAs. Notebook checks verify that the current helper is embedded verbatim.
+- A real unauthenticated GitHub checkout into a temporary nonempty directory passed: project files
+  were flat, an existing notebook survived, and a second run reused the resolved commit.
+- Both notebooks executed successfully in explicit synthetic mode; retained copies are under
+  `artifacts/verification/single-episode/`. Ruff, compileall and Git whitespace checks passed.
+- No live Kaggle session, real RGB processing, or paid model requests were run. The existing
+  Docker/real-bundle availability skips remain. Prior ZIP-based checks below are historical.
+
 ## Single-episode update — 2026-11-03
 
 The current configuration selects exactly one episode, the shortest collected HM3D RGB history.
