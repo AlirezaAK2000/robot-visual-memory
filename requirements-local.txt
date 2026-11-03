@@ -1,0 +1,2 @@
+-r requirements-core.lock
+# Then: python -m pip install --no-deps -e .

@@ -1,0 +1,40 @@
+schema_version: '1.0'
+seed: 42
+dataset:
+  repository_revision: cfa3fce4595c1622bb2f8a38ae2ca9aae9eb685b
+  input_path: null  # Kaggle attached .tgz/.zip or extracted directory; never downloaded locally
+  allow_download: false
+  min_free_gb: 15
+  environment_selection: smallest  # choose the shortest present HM3D episode after inventory
+  environments: 1
+  environment_ids: []  # optional inventory scope; empty means all HM3D histories in metadata
+  frames_per_environment: 200  # hard maximum 200 in single-episode mode
+  frame_sampling: disjoint_windows  # one midpoint per contiguous, nonoverlapping sequence window
+  preview_fps: 6  # review playback only, not a measured capture rate
+  max_image_side: 1024
+  jpeg_quality: 90
+  questions_per_eval_environment: 3
+extraction:
+  model: gpt-6-luna
+  concurrency: 2
+  max_attempts: 3
+  max_requests: 700  # persistent attempt budget, including retries and failures
+  max_output_tokens: 2400
+  max_reserved_output_tokens: 1680000
+embedding:
+  model: BAAI/bge-small-en-v1.5
+  revision: 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
+  dimension: 384
+  max_length: 512
+  query_instruction: 'Represent this sentence for searching relevant passages: '
+  pooling: cls
+  normalize: true
+  dtype: float32
+  batch_size: 32
+  export_snapshot: false
+retrieval:
+  collection: robot_visual_memory_single_episode
+  parser: rules  # rules (offline) or gpt (paid, bounded, cached; question only)
+  min_graph_score: 1.0
+  k_values: [1, 3, 5]
+  warm_repeats: 2

@@ -1,0 +1,50 @@
+name: robot-visual-memory
+services:
+  neo4j:
+    image: neo4j:5.26.12-community@sha256:9f75e8df4325a24f00fdd7a8c0bcce650a58375049b1058e496e8b43d6c36b37
+    ports: ['127.0.0.1:7474:7474', '127.0.0.1:7687:7687']
+    environment:
+      NEO4J_AUTH: '${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:?Copy .env.example to .env and set a password}'
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_allowlist: 'apoc.meta.*'
+      NEO4J_dbms_security_procedures_unrestricted: 'apoc.meta.*'
+    volumes: [neo4j_data:/data, neo4j_logs:/logs]
+    healthcheck:
+      test: ['CMD-SHELL', 'cypher-shell -u "$${NEO4J_AUTH%%/*}" -p "$${NEO4J_AUTH#*/}" "RETURN 1" >/dev/null 2>&1']
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+  qdrant:
+    build:
+      context: .
+      dockerfile: Dockerfile.qdrant
+    ports: ['127.0.0.1:6333:6333', '127.0.0.1:6334:6334']
+    volumes: [qdrant_data:/qdrant/storage]
+    healthcheck:
+      test: ['CMD', 'curl', '--fail', '--silent', 'http://localhost:6333/readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  neo4j-mcp:
+    image: neo4j/mcp:v2.0.0@sha256:3b65fa5a096e8ac547c3f22be074e8fdd108b505c394d664e4d55e3d5981d58d
+    profiles: [mcp]
+    stdin_open: true
+    tty: false
+    environment:
+      NEO4J_MCP_URI: bolt://neo4j:7687
+      NEO4J_MCP_USERNAME: '${NEO4J_USERNAME:-neo4j}'
+      NEO4J_MCP_PASSWORD: '${NEO4J_PASSWORD:?Set NEO4J_PASSWORD}'
+      NEO4J_MCP_DATABASE: neo4j
+      NEO4J_MCP_TRANSPORT_MODE: stdio
+      NEO4J_MCP_READ_ONLY: 'true'
+      NEO4J_MCP_TELEMETRY: 'false'
+    depends_on:
+      neo4j: {condition: service_healthy}
+    # Codex owns this process. No TCP port and no restart loop for a STDIO server.
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  qdrant_data:
