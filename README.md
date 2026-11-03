@@ -124,7 +124,13 @@ episodes after checking their expected file sizes; missing outputs trigger that 
 Only the selected shortest episode is subsequently decoded/preprocessed and sent to the VLM. ScanNet
 is excluded. Check available Kaggle disk space before starting; no RGB data is downloaded on the laptop.
 
-Downloads stream with progress and retry interrupted transfers up to three times. Validated
+Downloads stream with progress and make up to three attempts for interrupted transfers or HTTP
+429/500/502/503/504. Retries start at the stable source URL, rather than reusing a signed CDN URL,
+and wait 5 then 10 seconds, or longer when a valid Retry-After header requests it. If the server
+requests more than 60 seconds, the downloader stops with instructions to wait and rerun instead
+of retrying early. HTTP 401/403/404 errors stop immediately. To recover from a CDN 503, rerun the
+same collection cell with the same WORK directory; completed episodes are skipped and safe partials
+are retained. A server that stays unavailable can still exhaust the bounded retry limit. Validated
 identity-encoded byte ranges can resume; legacy/compressed partials restart safely. HTTP wire
 Content-Length is never compared to decoded file size. Links, devices, traversal and excessive
 archive expansion are rejected. Do not change the input collection while the notebook is running.

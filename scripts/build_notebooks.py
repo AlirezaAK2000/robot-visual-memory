@@ -151,8 +151,12 @@ save(
     checks from its LFS metadata. This is different archive packaging; we cannot prove equality with
     the expired original Dropbox archive. Acquisition provenance records the actual provider.
     Access failures stop with the exact Add Input route. No ScanNet, depth, meshes or simulator.
-    The source archive stays on Kaggle. HTTP downloads retry interrupted streams up to three times
-    and resume only validated identity-encoded byte ranges. Compressed responses are decoded without
+    The source archive stays on Kaggle. HTTP downloads make up to three attempts for interrupted
+    streams or temporary HTTP 429/500/502/503/504 responses. Retries use the original source URL,
+    with 5/10-second backoff and Retry-After support. A requested wait over 60 seconds stops with
+    instructions to retry later. For a CDN 503, rerun this same cell with the same WORK directory;
+    completed mirror episodes are skipped and safe partials remain available.
+    Downloads resume only validated identity-encoded byte ranges. Compressed responses are decoded without
     comparing wire Content-Length to decoded file size. Legacy/compressed partials automatically
     restart safely; you do not need to delete the failed metadata partial manually.
     Archive inventory streams member headers without

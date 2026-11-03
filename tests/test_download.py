@@ -7,6 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+import requests
 
 from rvm.io import atomic_json, read_json
 from rvm.preparation import download
@@ -23,7 +24,8 @@ class Response:
         pass
 
     def raise_for_status(self):
-        pass
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
 
     def iter_content(self, size):
         yield self.data
@@ -226,3 +228,122 @@ def test_exhausted_retries_retain_resumable_partial_for_next_run(tmp_path, monke
         ),
     )
     assert download("https://test/file", path).read_bytes() == b"abcdef"
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_transient_http_errors_retry_original_url_and_preserve_partial(tmp_path, monkeypatch, status):
+    path = tmp_path / "episode.tar"
+    part = tmp_path / "episode.tar.part"
+    part.write_bytes(b"abc")
+    url = "https://huggingface.test/datasets/repo/resolve/pinned/episode.tar"
+    atomic_json(
+        tmp_path / "episode.tar.part.json",
+        {
+            "url": url,
+            "validator": '"v1"',
+            "content_encoding": "identity",
+        },
+    )
+    calls, waits = [], []
+
+    def get(requested_url, **kwargs):
+        calls.append((requested_url, kwargs["headers"]))
+        assert part.read_bytes() == b"abc"
+        if len(calls) == 1:
+            return Response(status, b"unavailable", {"Retry-After": "7"})
+        return Response(
+            206,
+            b"def",
+            {
+                "Content-Length": "3",
+                "Content-Range": "bytes 3-5/6",
+                "ETag": '"v1"',
+            },
+        )
+
+    monkeypatch.setattr("rvm.preparation.requests.get", get)
+    monkeypatch.setattr("rvm.preparation.time.sleep", waits.append)
+    assert download(url, path).read_bytes() == b"abcdef"
+    assert waits == [7]
+    assert [call[0] for call in calls] == [url, url]
+    assert all(call[1]["Range"] == "bytes=3-" for call in calls)
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_permanent_http_errors_are_not_retried(tmp_path, monkeypatch, status):
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return Response(status, b"denied", {})
+
+    monkeypatch.setattr("rvm.preparation.requests.get", get)
+    with pytest.raises(requests.HTTPError):
+        download("https://test/file", tmp_path / "file")
+    assert len(calls) == 1 and not (tmp_path / "file.part").exists()
+
+
+def test_persistent_503_is_bounded_without_touching_checkpoint(tmp_path, monkeypatch):
+    path = tmp_path / "episode.tar"
+    part = tmp_path / "episode.tar.part"
+    part.write_bytes(b"abc")
+    checkpoint = {"url": "https://test/file", "validator": '"v1"', "content_encoding": "identity"}
+    metadata = tmp_path / "episode.tar.part.json"
+    atomic_json(metadata, checkpoint)
+    calls, waits = [], []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return Response(503, b"unavailable", {})
+
+    monkeypatch.setattr("rvm.preparation.requests.get", get)
+    monkeypatch.setattr("rvm.preparation.time.sleep", waits.append)
+    with pytest.raises(RuntimeError, match=r"after 3 attempts: episode.tar \(HTTP 503\)"):
+        download("https://test/file", path)
+    assert len(calls) == 3 and waits == [5, 10]
+    assert part.read_bytes() == b"abc" and read_json(metadata) == checkpoint
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "retry_after,expected_delay",
+    [
+        ("Tue, 03 Nov 2026 00:00:17 GMT", 17),
+        ("invalid", 5),
+        ("-1", 5),
+    ],
+)
+def test_retry_after_http_date_and_invalid_header(tmp_path, monkeypatch, retry_after, expected_delay):
+    from datetime import datetime, timezone
+
+    monkeypatch.setattr(
+        "rvm.preparation.time.time", lambda: datetime(2026, 11, 3, tzinfo=timezone.utc).timestamp()
+    )
+    calls, waits = [], []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return (
+            Response(503, b"unavailable", {"Retry-After": retry_after})
+            if len(calls) == 1
+            else Response(200, b"ok", {"Content-Length": "2"})
+        )
+
+    monkeypatch.setattr("rvm.preparation.requests.get", get)
+    monkeypatch.setattr("rvm.preparation.time.sleep", waits.append)
+    assert download("https://test/file", tmp_path / "file").read_bytes() == b"ok"
+    assert waits == [expected_delay]
+
+
+def test_long_retry_after_stops_without_retrying_early(tmp_path, monkeypatch):
+    calls, waits = [], []
+
+    def get(*args, **kwargs):
+        calls.append(args)
+        return Response(503, b"unavailable", {"Retry-After": "120"})
+
+    monkeypatch.setattr("rvm.preparation.requests.get", get)
+    monkeypatch.setattr("rvm.preparation.time.sleep", waits.append)
+    with pytest.raises(RuntimeError, match="server requests a wait of 120 seconds"):
+        download("https://test/file", tmp_path / "file")
+    assert len(calls) == 1 and not waits

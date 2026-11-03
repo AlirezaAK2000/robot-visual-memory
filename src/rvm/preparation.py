@@ -4,6 +4,7 @@ import re
 import shutil
 import time
 from collections import Counter
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
@@ -25,12 +26,30 @@ MANUAL_ROUTE = (
 )
 
 
+def _download_retry_delay(headers, attempt):
+    """Back off at least 5/10 seconds and respect valid Retry-After seconds or HTTP dates."""
+    delay = 5 * 2**attempt
+    value = headers.get("Retry-After")
+    if value:
+        try:
+            requested = float(value)
+        except ValueError:
+            try:
+                requested = parsedate_to_datetime(value).timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                requested = 0
+        if np.isfinite(requested):
+            delay = max(delay, requested)
+    return delay
+
+
 def download(url, target, *, expected_md5=None, min_free_gb=0):
     """Decode HTTP bodies correctly; resume only validated, identity-encoded partials.
 
     Content-Length describes encoded wire bytes, while requests.iter_content yields decoded
     bytes. Ask for identity encoding, but also handle hosts/proxies that still compress.
-    Retry transient/truncated streams at most three times, retaining safe partial checkpoints.
+    Make at most three attempts for transient HTTP/transport failures, retaining safe partials.
+    Every attempt starts at the original URL, obtaining a fresh redirect to a signed CDN URL.
     """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -57,6 +76,8 @@ def download(url, target, *, expected_md5=None, min_free_gb=0):
             print(f"Resuming {target.name} at byte {offset:,}.")
         try:
             with requests.get(url, headers=headers, stream=True, timeout=(20, 180)) as response:
+                if response.status_code != 416:
+                    response.raise_for_status()
                 encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
                 encoded = encoding not in {"", "identity"}
                 etag = response.headers.get("ETag")
@@ -87,7 +108,6 @@ def download(url, target, *, expected_md5=None, min_free_gb=0):
                     raise requests.exceptions.ChunkedEncodingError(
                         "range rejected; restarting from byte zero"
                     )
-                response.raise_for_status()
                 if response.status_code not in {200, 206}:
                     raise ValueError(f"unexpected download HTTP status: {response.status_code}")
                 if "text/html" in response.headers.get("Content-Type", "").lower():
@@ -147,18 +167,34 @@ def download(url, target, *, expected_md5=None, min_free_gb=0):
                             raise requests.exceptions.ChunkedEncodingError("incomplete HTTP body")
             break
         except (
+            requests.exceptions.HTTPError,
             requests.exceptions.ConnectionError,
             requests.exceptions.Timeout,
             requests.exceptions.ChunkedEncodingError,
             requests.exceptions.ContentDecodingError,
         ) as exc:
+            error = type(exc).__name__
+            retry_headers = {}
+            if isinstance(exc, requests.exceptions.HTTPError):
+                status = exc.response.status_code if exc.response is not None else None
+                if status not in {429, 500, 502, 503, 504}:
+                    raise
+                error = f"HTTP {status}"
+                retry_headers = exc.response.headers
             if attempt == 2:
                 raise RuntimeError(
-                    f"Download interrupted after 3 attempts: {target.name}. Partial data is retained; "
+                    f"Download interrupted after 3 attempts: {target.name} ({error}). Any partial data is retained; "
                     "rerun to resume when a validated byte range is available, otherwise restart."
-                ) from exc
-            print(f"Download interrupted ({type(exc).__name__}); retrying {target.name} ({attempt + 2}/3).")
-            time.sleep(attempt + 1)
+                ) from None
+            delay = _download_retry_delay(retry_headers, attempt)
+            if delay > 60:
+                raise RuntimeError(
+                    f"Download paused for {target.name} ({error}): server requests a wait of {delay:.0f} seconds. "
+                    "This exceeds the 60-second automatic wait limit. Wait and rerun the same cell; "
+                    "any partial data is retained."
+                ) from None
+            print(f"Download interrupted ({error}); retrying {target.name} ({attempt + 2}/3) in {delay:g}s.")
+            time.sleep(delay)
     if expected_md5 and file_hash(part, "md5", show_progress=True) != expected_md5:
         raise ValueError("archive MD5 differs from official instructions; delete .part and retry")
     part.replace(target)

@@ -1,5 +1,25 @@
 # Verification actually performed
 
+## Transient CDN HTTP retries — 2026-11-03
+
+The episode-042 HTTP 503 revealed that download retries covered transport interruptions but not
+HTTP status errors. Downloads now retry HTTP 429/500/502/503/504, with at most three total attempts,
+5/10-second backoff and valid Retry-After seconds/date support. A server-requested wait above
+60 seconds stops with a retry-later message rather than retrying early. Permanent 401/403/404
+errors remain immediate failures. Each attempt starts at the stable source URL, and failed HTTP
+responses leave partial bytes/checkpoints untouched. Signed CDN URLs are omitted from exhausted
+retry messages. Existing per-episode completion markers continue to skip completed downloads.
+
+- **109 tests passed, 2 skipped** (21.96 seconds); Ruff, compileall and whitespace checks passed.
+- Synthetic HTTP tests cover every retryable status, unchanged range headers/partial bytes on
+  recovery, retry exhaustion, numeric/date/malformed Retry-After headers, long requested waits,
+  and permanent status failures.
+- A live 512-byte probe for `042-hm3d-hkr2MGpHD6B.tar` returned HTTP 206 with content range
+  `bytes 0-511/429373440`. This establishes current reachability only, not full archive integrity
+  or the absence of future CDN failures. No complete RGB TAR was downloaded locally.
+- Both notebooks executed successfully in explicit synthetic mode. No paid requests or live
+  Kaggle execution were performed.
+
 ## Expired RGB link and pinned episode mirror — 2026-11-03
 
 The official README's Dropbox URL was probed with `dl=1` and `raw=1`; both returned HTML with
