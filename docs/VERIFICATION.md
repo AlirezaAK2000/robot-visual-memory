@@ -1,5 +1,26 @@
 # Verification actually performed
 
+## NumPy runtime restart guard — 2026-11-03
+
+The supplied Kaggle traceback fails during SentenceTransformer's scientific dependency imports,
+ending at `numpy._core.strings` while assigning a ufunc's `__module__`. This is consistent with
+mixed Python/native NumPy versions after installing packages into an already running kernel;
+the actual Kaggle loaded/installed versions were not available, so that cause is not confirmed.
+
+Bootstrap now snapshots versions of already imported scientific/embedding dependencies before pip
+and compares them with installed distribution versions afterward. A mismatch stops before project
+imports with a kernel-restart instruction. The specific NumPy import failure also gains a recovery
+message without masking unrelated AttributeErrors. No in-place reload of native modules is attempted.
+
+- **115 tests passed, 2 skipped** (22.58 seconds); Ruff, compileall and whitespace checks passed.
+- Tests cover loaded-module/distribution aliases, changed/unchanged/missing installed packages,
+  the specific NumPy error message, and propagation of unrelated import failures.
+- A clean local Python 3.12 process successfully imported NumPy strings, SciPy sparse,
+  scikit-learn and SentenceTransformer using NumPy 2.2.6 / SciPy 1.16.3 / scikit-learn 1.7.2.
+  This imported the library only; it did not download or run an embedding model.
+- Both notebooks executed in synthetic mode. A live Kaggle Python 3.13 environment, actual stale
+  native-module state, real BGE inference and paid API requests were not exercised.
+
 ## Transient CDN HTTP retries — 2026-11-03
 
 The episode-042 HTTP 503 revealed that download retries covered transport interruptions but not

@@ -78,6 +78,15 @@ updates refuse tracked local edits or conflicting untracked files. If imported c
 restart the kernel and run again with `UPDATE_REPOSITORY=False`. Changing REPOSITORY_REF also requires
 that explicit update. The notebook changes its working directory to PROJECT_ROOT before installation.
 
+If installation changes an already imported NumPy/SciPy/scikit-learn/pandas dependency, bootstrap
+stops with a kernel-restart message. Restart the kernel in the same Kaggle session, keep WORK and
+your custom episode-selection cell, set `UPDATE_REPOSITORY=False`, and rerun in order. Loaded
+native extensions cannot be updated safely by rerunning an import. Existing downloads and matching
+VLM extraction cache entries remain reusable. A `numpy.ufunc` / `__module__` error during BGE import
+can indicate this mixed runtime; try the kernel restart first. If it persists, reinstall the pinned
+scientific packages, restart again, and rerun. The pinned NumPy/SciPy/scikit-learn versions are
+2.2.6/1.16.3/1.7.2; avoid replacing Kaggle's PyTorch/CUDA stack while repairing these dependencies.
+
 `WORK` defaults to `/kaggle/working/rvm-single-episode`.
 Time-consuming preparation steps show notebook-friendly progress bars: archive downloads/hashing,
 inventory/extraction, image inspection and duplicate checks, gallery preprocessing, video encoding,

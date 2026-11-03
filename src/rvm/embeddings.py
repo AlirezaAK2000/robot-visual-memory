@@ -10,7 +10,19 @@ from .io import atomic_json, digest, read_json
 
 class CaptionEmbedder:
     def __init__(self, settings, *, snapshot=None, cache_folder=None):
-        from sentence_transformers import SentenceTransformer
+        try:
+            from sentence_transformers import SentenceTransformer
+        except AttributeError as exc:
+            if "numpy.ufunc" not in str(exc) or "__module__" not in str(exc):
+                raise
+            raise RuntimeError(
+                "NumPy failed during embedding dependency import. This can happen when pip replaces "
+                "NumPy while its old native code is still loaded. Restart the kernel, keep the same "
+                "WORK directory, set UPDATE_REPOSITORY=False, and rerun in order (including any custom "
+                "episode-selection cell). Matching pilot extractions are cached and reused. "
+                "If it persists after restart, repair the pinned NumPy/SciPy/scikit-learn installation "
+                "and restart again."
+            ) from exc
 
         self.settings = dict(settings)
         if settings["pooling"] != "cls" or settings["dtype"] != "float32" or not settings["normalize"]:

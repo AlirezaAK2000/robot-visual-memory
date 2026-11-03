@@ -3,6 +3,7 @@
 import importlib.util
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -98,3 +99,47 @@ def test_explicit_commit_sha(tmp_path, origin):
     commit = git(origin, "rev-parse", "HEAD")
     report = checkout_repository(str(origin), commit, tmp_path / "working")
     assert report["commit"] == commit
+
+
+def test_dependency_snapshot_reads_loaded_modules_without_importing_them(monkeypatch):
+    monkeypatch.setattr(
+        MODULE,
+        "sys",
+        SimpleNamespace(
+            modules={
+                "numpy": SimpleNamespace(__version__="old-numpy"),
+                "sklearn": SimpleNamespace(__version__="old-sklearn"),
+                "PIL": SimpleNamespace(__version__="old-pillow"),
+                "transformers": SimpleNamespace(),
+            }
+        ),
+    )
+    assert MODULE.loaded_dependency_versions() == {
+        "numpy": "old-numpy",
+        "scikit-learn": "old-sklearn",
+        "Pillow": "old-pillow",
+    }
+
+
+def test_replaced_loaded_dependency_requires_restart(monkeypatch):
+    monkeypatch.setattr(MODULE, "version", lambda name: "2.2.6")
+    with pytest.raises(RuntimeError, match="Restart the kernel") as error:
+        MODULE.require_current_dependency_versions({"numpy": "2.1.0"})
+    assert "kernel=2.1.0, installed=2.2.6" in str(error.value)
+    assert "same WORK directory" in str(error.value)
+
+
+def test_unchanged_loaded_dependencies_do_not_require_restart(monkeypatch):
+    versions = {"numpy": "2.2.6", "scipy": "1.16.3"}
+    monkeypatch.setattr(MODULE, "version", versions.__getitem__)
+    MODULE.require_current_dependency_versions(versions)
+    MODULE.require_current_dependency_versions({})
+
+
+def test_removed_loaded_dependency_requires_restart(monkeypatch):
+    def missing(name):
+        raise MODULE.PackageNotFoundError(name)
+
+    monkeypatch.setattr(MODULE, "version", missing)
+    with pytest.raises(RuntimeError, match="installed=missing"):
+        MODULE.require_current_dependency_versions({"numpy": "2.2.6"})

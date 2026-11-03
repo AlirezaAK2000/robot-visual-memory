@@ -7,7 +7,48 @@ untracked files; no force/reset/clean operations are used.
 
 import os
 import subprocess
+import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+
+
+def loaded_dependency_versions():
+    """Inspect already imported dependencies without importing any scientific libraries."""
+    names = {
+        "numpy": "numpy",
+        "scipy": "scipy",
+        "sklearn": "scikit-learn",
+        "pandas": "pandas",
+        "PIL": "Pillow",
+        "sentence_transformers": "sentence-transformers",
+        "transformers": "transformers",
+        "tokenizers": "tokenizers",
+    }
+    return {
+        distribution: str(module.__version__)
+        for name, distribution in names.items()
+        if (module := sys.modules.get(name)) is not None and getattr(module, "__version__", None) is not None
+    }
+
+
+def require_current_dependency_versions(loaded):
+    """Stop after pip replaces an imported package; native extensions require a kernel restart."""
+    mismatches = []
+    for distribution, loaded_version in loaded.items():
+        try:
+            installed_version = version(distribution)
+        except PackageNotFoundError:
+            installed_version = "missing"
+        if installed_version != loaded_version:
+            mismatches.append(f"{distribution}: kernel={loaded_version}, installed={installed_version}")
+    if mismatches:
+        raise RuntimeError(
+            "Dependencies changed while the kernel still has older modules loaded:\n"
+            + "\n".join(mismatches)
+            + "\nRestart the kernel, keep the same WORK directory, set UPDATE_REPOSITORY=False, "
+            "and rerun from configuration. Existing downloads and extraction caches remain on disk. "
+            "Do not reload NumPy in place."
+        )
 
 
 def checkout_repository(repository_url, ref, target, *, update=False):

@@ -100,6 +100,9 @@ save(
 
     Install the reusable package. Kaggle keeps its supplied PyTorch
     GPU runtime; exact realized package versions are recorded in the export. On CPU the same code runs.
+    If pip replaces a dependency already loaded by the kernel, bootstrap stops and asks for a kernel
+    restart before importing project modules. Keep the same WORK directory and rerun in order with
+    UPDATE_REPOSITORY=False. This prevents mixing old native NumPy code with newly installed files.
     Never put a key in a notebook cell or export directory. Reruns use the same WORK directory for caches.
     """),
         code(
@@ -125,8 +128,10 @@ save(
     print('Project root:', SOURCE)
     print('Repository commit:', source_provenance['commit'], 'reused:', source_provenance.get('reused_checkout', False))
     if not SMOKE:
+        dependencies_before_install = loaded_dependency_versions()
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '-r', 'requirements-kaggle.txt'], cwd=SOURCE)
         subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--no-deps', '-e', '.'], cwd=SOURCE)
+        require_current_dependency_versions(dependencies_before_install)
         import torch
         if int(torch.__version__.split('.')[0]) < 2:
             raise RuntimeError('Use a Kaggle image with PyTorch 2.x; the notebook preserves its CUDA runtime')

@@ -48,3 +48,27 @@ def test_query_preprocessing_and_truncation_without_model_download():
 def test_bad_vectors(array):
     with pytest.raises(ValueError):
         validate_vectors(array, 1, 2)
+
+
+@pytest.mark.parametrize("numpy_error", [True, False])
+def test_dependency_import_error_explains_numpy_restart_without_masking_other_errors(
+    monkeypatch, numpy_error
+):
+    import builtins
+
+    original_import = builtins.__import__
+    message = (
+        "'numpy.ufunc' object has no attribute '__module__' and no __dict__ for setting new attributes"
+        if numpy_error
+        else "unrelated attribute failure"
+    )
+
+    def fail_import(name, *args, **kwargs):
+        if name == "sentence_transformers":
+            raise AttributeError(message)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_import)
+    expected = RuntimeError if numpy_error else AttributeError
+    with pytest.raises(expected, match="Restart the kernel" if numpy_error else message):
+        CaptionEmbedder({})
