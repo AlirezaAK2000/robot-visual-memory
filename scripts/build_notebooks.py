@@ -54,8 +54,9 @@ save(
 
     Upload this notebook to Kaggle, enable Internet, and optionally select a GPU. The bootstrap
     checks out the GitHub project directly into `/kaggle/working`, with no nested repository folder.
-    No source ZIP or source Dataset attachment is needed. The RGB archive is documented in
-    OpenEQA's official data README (about 12 GB).
+    No source ZIP or source Dataset attachment is needed. The original Dropbox RGB link has expired;
+    the default download provider is a pinned third-party Hugging Face mirror of episode PNG TARs.
+    Mirror data is about 12.6 GB; original Dropbox archive byte identity is unverified.
     Attached archives/extracted datasets are also supported. You need temporary disk for compressed
     data plus extraction; this implementation extracts only selected histories' RGB members.
     Read the source dataset's terms before redistribution; keep imagery/artifacts private as appropriate.
@@ -78,6 +79,7 @@ save(
     CONFIG_FILE = None  # defaults to PROJECT_ROOT/config.example.yaml; optional attached edited YAML
     ATTACHED_RGB = None  # Path('/kaggle/input/my-rgb/open-eqa-hm3d-frames-v0.tgz') or extracted root
     ALLOW_RGB_DOWNLOAD = False  # enable only inside Kaggle with enough disk
+    RGB_PROVIDER = 'huggingface'  # pinned episode TAR mirror; original 'dropbox' link has expired
     SAMPLING_REVIEWED = False  # review the sampled and original preview videos before paid extraction
     RUN_PILOT = False  # first three sampled frames (all if fewer); needs Kaggle Secrets/env key
     PILOT_REVIEWED = False  # set True AFTER reviewing the pilot output and prompt
@@ -135,6 +137,7 @@ save(
     config = load_config(CONFIG_FILE or SOURCE/'config.example.yaml')
     config['dataset']['input_path'] = str(ATTACHED_RGB) if ATTACHED_RGB else config['dataset']['input_path']
     config['dataset']['allow_download'] = ALLOW_RGB_DOWNLOAD
+    config['dataset']['rgb_provider'] = RGB_PROVIDER
     config['embedding']['export_snapshot'] = EXPORT_OFFLINE_MODEL
     BUNDLE = WORK/'compact-bundle'
     atomic_json(BUNDLE/'provenance/source-code.json', source_provenance)
@@ -143,7 +146,10 @@ save(
         ),
         md("""
     ## Metadata first; inventory every collected episode before choosing one
-    URLs and the archive MD5 are resolved from the pinned official data README, not invented.
+    Question metadata and the original archive reference/MD5 come from the pinned official README.
+    With RGB_PROVIDER='huggingface', mirror TARs use a separately pinned commit and per-TAR SHA-256
+    checks from its LFS metadata. This is different archive packaging; we cannot prove equality with
+    the expired original Dropbox archive. Acquisition provenance records the actual provider.
     Access failures stop with the exact Add Input route. No ScanNet, depth, meshes or simulator.
     The source archive stays on Kaggle. HTTP downloads retry interrupted streams up to three times
     and resume only validated identity-encoded byte ranges. Compressed responses are decoded without
@@ -151,6 +157,10 @@ save(
     restart safely; you do not need to delete the failed metadata partial manually.
     Archive inventory streams member headers without
     extracting all episodes. It needs a second archive scan to extract only the shortest episode.
+    The mirror instead collects PNG episodes one TAR at a time, verifies/extracts each and removes
+    its temporary TAR, avoiding two full collection copies. Per-episode checkpoints survive reruns.
+    All available HM3D episodes with QA metadata are collected before computing their frame counts;
+    only the shortest episode is subsequently preprocessed and sent to the VLM. No ScanNet download.
     For an attached extracted directory we count the RGB files in place. Missing metadata episodes
     are listed separately: the minimum is over the **collected** episodes, not unseen/missing data.
     """),
@@ -172,7 +182,11 @@ save(
         display(pd.DataFrame(qa_rows).assign(dataset=lambda d: d.episode_history.str.split('/').str[0])
                 .groupby(['dataset', 'category']).size().rename('questions').to_frame())
         print('Metadata histories:', len({r['episode_history'] for r in qa_rows}))
-        source = locate_rgb_source(config, WORK, archive_info)
+        source = locate_rgb_source(config, WORK, archive_info, qa_rows=qa_rows)
+        if 'rgb_acquisition' in archive_info:
+            print('RGB provider:', archive_info['rgb_acquisition']['provider'])
+            print('Mirror commit:', archive_info['rgb_acquisition']['revision'])
+            print('Original Dropbox archive byte identity is unverified; actual mirror counts follow.')
     inventory, inventory_summary = inventory_episodes(source, qa_rows, config)
     histogram = save_inventory(inventory, inventory_summary, BUNDLE/'review', synthetic=SMOKE)
     display(pd.DataFrame(inventory).sort_values(['frame_count','environment_id']).reset_index(drop=True))

@@ -9,6 +9,16 @@ Verified 2026-11-02. Runtime smoke tests are a separate matter; see VERIFICATION
   The acquisition code resolves the link from that pinned README instead of inventing image URLs.
   Official extraction source names RGB frames `*-rgb.png`; QA metadata uses `question_id`,
   `episode_history`, `question`, `answer`, `category`. Image availability/host access is not guaranteed.
+- **RGB source update, 2026-11-03:** the original Dropbox shared link returns a "Link Expired" page;
+  `dl=1` and `raw=1` do not restore access, and the content host returns HTTP 403. Kaggle downloads
+  now use the third-party [AIGeeksGroup/OpenEQA episode archive mirror](https://huggingface.co/datasets/AIGeeksGroup/OpenEQA),
+  pinned to `9b127cf58e564fe2468bb140c10b20dd937a97f8`. Its public API lists 63 HM3D TARs
+  (12,563,097,600 bytes). Each TAR has a pinned LFS SHA-256, checked before extraction. This is
+  different packaging; byte equality/completeness relative to the unavailable original archive
+  is unverified. The histogram describes the actual collected mirror frames. Official QA metadata
+  remains pinned to OpenEQA. Only small metadata/header probes were performed locally, not a full
+  RGB mirror download. [Dropbox's documented download parameters](https://help.dropbox.com/share/force-download)
+  change preview/download behavior but do not revive an expired shared link.
 - [GPT-6 Luna model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna)
   establishes image input, Responses endpoint, structured outputs and Batch support.
   The pilot default is `gpt-6-luna` (updated 2026-11-03); the model remains configurable.

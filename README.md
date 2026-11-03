@@ -26,6 +26,7 @@ config.example.yaml, .env.example         experiment settings and local credenti
 pyproject.toml, requirements-*.txt/lock   package metadata and reproducible dependencies
 src/rvm/schemas.py                       strict schemas and graph validation
 src/rvm/preparation.py                   official acquisition, inspection, deterministic selection
+src/rvm/mirror.py                        pinned mirror TAR verification and resumable episode collection
 src/rvm/episode_selection.py             episode inventory, histogram, disjoint windows and MP4 previews
 src/rvm/extraction.py                    strict VLM requests, cache, budgets, raw provenance
 src/rvm/review.py                        input images beside readable pilot captions and graphs
@@ -98,34 +99,42 @@ in provenance. This avoids replacing its working GPU runtime; it does not promis
 GPU/CPU inference across different Kaggle images. Regenerate locks using the command in the core
 lock's header, then `python scripts/kaggle_lock.py`.
 
-The notebook first downloads the pinned official question metadata and data README, then resolves
-the prepared HM3D RGB archive link and MD5 from that README. Choose one acquisition route in the
-configuration cell:
+The notebook keeps the pinned official question metadata. **The original Dropbox RGB link has
+expired** (verified 2026-11-03). For Kaggle downloads, the default provider now uses the third-party
+[AIGeeksGroup/OpenEQA mirror](https://huggingface.co/datasets/AIGeeksGroup/OpenEQA/tree/main), pinned to
+commit `9b127cf58e564fe2468bb140c10b20dd937a97f8`. Its HM3D files are separate episode TARs rather
+than the original combined archive. Original Dropbox byte identity is **unverified**; acquisition
+provenance records the mirror, revision and each TAR's SHA-256 from pinned LFS metadata. The official
+README/MD5 remain reference information and are not used to validate differently packaged mirror TARs.
 
-- **Kaggle download:** set `ALLOW_RGB_DOWNLOAD=True`. No original imagery is downloaded locally.
-- **Attached archive:** set `ATTACHED_RGB=Path('/kaggle/input/<dataset>/open-eqa-hm3d-frames-v0.tgz')`.
-- **Attached extracted data:** set `ATTACHED_RGB` to the root containing `hm3d-v0/<episode>/*-rgb.png`.
+Choose one route in the notebook configuration:
 
-The official third-party archive is about 12 GB compressed. Check your Kaggle quota: compressed
-archive, extracted images from the one chosen episode, selected copies and optional model snapshot
-all need temporary space.
-Downloads stream with progress, validate content/checksum, and resume only when the host supplies
-a strong ETag/Last-Modified validator and correct identity-encoded byte ranges. Interrupted streams
-retry up to three times. HTTP-compressed bodies are decoded correctly: their wire Content-Length
-is not compared with decoded file size. Legacy or compressed partial checkpoints restart safely
-instead of appending using an invalid offset; no manual removal of the metadata `.part` is needed.
-The inventory streams through all archive members, without
-extracting their images, to count the collected episodes. A second pass extracts only the shortest
-episode's RGB files. An already extracted input is counted in place. Full extraction elsewhere can
-need much more temporary space.
-Links, device files, path traversal and excessive archive expansion are rejected. Interrupted
-downloads/checkpoints remain reusable; do not change the input file while a notebook is running.
+- **Kaggle mirror download:** set `ALLOW_RGB_DOWNLOAD=True`, `RGB_PROVIDER='huggingface'` and
+  `ATTACHED_RGB=None`. This public mirror currently needs no Hugging Face secret.
+- **Existing original archive:** set `ATTACHED_RGB=Path('/kaggle/input/<dataset>/open-eqa-hm3d-frames-v0.tgz')`.
+  Its documented MD5 is checked. Download permission can remain disabled.
+- **Existing extracted data:** set `ATTACHED_RGB` to the root containing `hm3d-v0/<episode>/*-rgb.png`.
 
-If the host denies access, returns a login page, or the documented link disappears, acquisition stops.
-Manual route: open the official [data README](https://github.com/facebookresearch/open-eqa/blob/main/data/README.md),
-follow **HM3D → Option 1 → third party location**, obtain the documented RGB archive, upload/attach it
-as a private Kaggle Dataset, and set ATTACHED_RGB. If necessary upload directly from a remote storage
-session; the laptop needs only the final compact export. No substituted data or simulated observations.
+The pinned mirror exposes 63 HM3D TARs, totaling 12,563,097,600 bytes. The notebook collects all available
+HM3D episodes that match QA metadata before building the frame-count histogram and selecting the
+shortest. It downloads one episode TAR, verifies SHA-256, extracts its RGB files, saves a completion
+checkpoint and removes that temporary TAR before proceeding. This keeps storage near the complete
+PNG collection plus one episode TAR, instead of keeping two complete copies. Reruns skip completed
+episodes after checking their expected file sizes; missing outputs trigger that episode's recovery.
+Only the selected shortest episode is subsequently decoded/preprocessed and sent to the VLM. ScanNet
+is excluded. Check available Kaggle disk space before starting; no RGB data is downloaded on the laptop.
+
+Downloads stream with progress and retry interrupted transfers up to three times. Validated
+identity-encoded byte ranges can resume; legacy/compressed partials restart safely. HTTP wire
+Content-Length is never compared to decoded file size. Links, devices, traversal and excessive
+archive expansion are rejected. Do not change the input collection while the notebook is running.
+
+For an attached original archive, inventory scans headers without extracting all images, then
+extracts only the shortest episode. Extracted attachments and the materialized mirror collection
+are counted in place. Selection uses actual collected frame counts and reports missing episodes;
+it does not infer full history coverage or original-archive equivalence from a mirror's file sizes.
+If mirror access also fails, attach an existing RGB collection via Add Input. An OpenAI key does
+not grant access to expired dataset links.
 
 Before sampling, `review/episode_frame_counts.csv` records exact RGB counts for every collected HM3D
 history with QA metadata; `review/episode_frame_count_histogram.png` plots their distribution. Missing

@@ -32,6 +32,7 @@
 - `src/rvm/fixture.py`
 - `src/rvm/ingestion.py`
 - `src/rvm/io.py`
+- `src/rvm/mirror.py`
 - `src/rvm/normalization.py`
 - `src/rvm/planning.py`
 - `src/rvm/preparation.py`
@@ -49,6 +50,7 @@
 - `tests/test_integrity.py`
 - `tests/test_kaggle_bootstrap.py`
 - `tests/test_metrics.py`
+- `tests/test_mirror.py`
 - `tests/test_notebooks.py`
 - `tests/test_planning.py`
 - `tests/test_preparation.py`

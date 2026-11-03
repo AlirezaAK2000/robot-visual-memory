@@ -115,6 +115,21 @@ def test_real_gzip_http_body_uses_wire_length_not_decoded_length(tmp_path):
         thread.join()
 
 
+def test_expired_link_explains_mirror_route_without_saving_html(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "rvm.preparation.requests.get",
+        lambda *a, **kw: Response(
+            200,
+            b"<html><title>Dropbox - Link Expired</title></html>",
+            {"Content-Type": "text/html"},
+        ),
+    )
+    target = tmp_path / "archive.tgz"
+    with pytest.raises(RuntimeError, match="RGB_PROVIDER='huggingface'"):
+        download("https://test/file", target)
+    assert not target.exists() and not target.with_suffix(".tgz.part").exists()
+
+
 @pytest.mark.parametrize("old_encoding", [None, "gzip"])
 def test_legacy_or_decoded_partial_restarts_safely(tmp_path, monkeypatch, old_encoding):
     path = tmp_path / "metadata.json"

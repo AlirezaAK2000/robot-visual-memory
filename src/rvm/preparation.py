@@ -16,9 +16,10 @@ from .io import atomic_json, digest, file_hash, portable_config, read_json, safe
 from .schemas import Frame, Question
 
 MANUAL_ROUTE = (
-    "Open https://github.com/facebookresearch/open-eqa/blob/main/data/README.md, "
-    "HM3D / Option 1 / third party location. Obtain the documented RGB .tgz, upload it as a "
-    "private Kaggle Dataset and attach it via Add Input. Set dataset.input_path to its "
+    "The original Dropbox RGB link in OpenEQA's data README has expired. In the updated notebook, "
+    "set RGB_PROVIDER='huggingface' and ALLOW_RGB_DOWNLOAD=True to use the pinned episode mirror. "
+    "Alternatively attach an existing RGB archive/extracted collection via Kaggle Add Input. "
+    "Set ATTACHED_RGB (dataset.input_path) to its "
     "/kaggle/input/<dataset>/open-eqa-hm3d-frames-v0.tgz (or extracted directory), then rerun. "
     "No simulator/depth/mesh is needed. Do not download this archive on the evaluation laptop."
 )
@@ -90,6 +91,13 @@ def download(url, target, *, expected_md5=None, min_free_gb=0):
                 if response.status_code not in {200, 206}:
                     raise ValueError(f"unexpected download HTTP status: {response.status_code}")
                 if "text/html" in response.headers.get("Content-Type", "").lower():
+                    preview = next(response.iter_content(64 * 1024), b"").decode("utf8", "replace")
+                    if "link expired" in preview.lower():
+                        raise RuntimeError(
+                            "The documented Dropbox RGB link has expired. Set RGB_PROVIDER='huggingface' "
+                            "in the updated notebook to use the pinned episode mirror, or attach an existing "
+                            "RGB collection. Repeated retries or an OpenAI API secret cannot restore this link."
+                        )
                     raise RuntimeError("Host returned an access/login page. " + MANUAL_ROUTE)
                 if response.status_code == 200:
                     if offset:
@@ -213,7 +221,7 @@ def select_environments(rows, config, *, inventory=None):
     return list(np.random.default_rng(config["seed"]).choice(available, n, replace=False))
 
 
-def locate_rgb_source(config, work, archive_info):
+def locate_rgb_source(config, work, archive_info, *, qa_rows=None):
     """Resolve attached/downloaded data before inventory; no image extraction here."""
     ds, work = config["dataset"], Path(work)
     attached = ds.get("input_path")
@@ -224,6 +232,17 @@ def locate_rgb_source(config, work, archive_info):
         if source.is_dir():
             return source
     elif ds["allow_download"]:
+        provider = ds.get("rgb_provider", "dropbox")
+        if provider == "huggingface":
+            from .mirror import collect_hm3d_mirror
+
+            if qa_rows is None:
+                qa_rows, _ = metadata_first(config, work)
+            source, provenance = collect_hm3d_mirror(config, work, qa_rows)
+            archive_info["rgb_acquisition"] = provenance
+            return source
+        if provider != "dropbox":
+            raise ValueError("rgb_provider must be huggingface or dropbox")
         try:
             source = download(
                 archive_info["url"],

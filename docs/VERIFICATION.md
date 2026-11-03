@@ -1,5 +1,27 @@
 # Verification actually performed
 
+## Expired RGB link and pinned episode mirror — 2026-11-03
+
+The official README's Dropbox URL was probed with `dl=1` and `raw=1`; both returned HTML with
+the title "Dropbox - Link Expired". The corresponding content host returned HTTP 403. The pinned
+and current OpenEQA READMEs still list that URL. Changing retry settings or API secrets cannot
+repair an expired shared link.
+
+Kaggle downloads now default to the public `AIGeeksGroup/OpenEQA` third-party mirror at immutable
+commit `9b127cf58e564fe2468bb140c10b20dd937a97f8`. Its API lists 63 HM3D episode TARs totaling
+12,563,097,600 bytes. A 4 KiB range probe returned HTTP 206, a valid TAR header and the expected
+`<episode>/00000-rgb.png` layout. No complete real RGB archive/image collection was downloaded here.
+Original Dropbox byte identity/completeness is unverified and is explicitly recorded as such.
+
+- **96 tests passed, 2 skipped** (21.91 seconds). Ruff, compileall and whitespace checks passed.
+- Synthetic per-episode TAR fixtures verify both supported layouts, RGB inventory/minimum selection,
+  skipping completed episodes, recovering a missing episode output, SHA-256 rejection, traversal/link
+  rejection, exclusion of ScanNet, temporary TAR cleanup and actual-provider acquisition provenance.
+- Expired HTML responses now identify the mirror route without saving a bogus archive.
+- Both notebooks executed successfully in synthetic mode with their review/progress/export outputs.
+- Full mirror download/checksums against real payloads, live Kaggle execution, Docker services and paid
+  VLM calls remain unrun. Mirror SHA-256 verification occurs in Kaggle before each TAR is extracted.
+
 ## Progress reporting and metadata download repair — 2026-11-03
 
 The notebooks now expose progress for directory/archive inventory and extraction, archive hashing,

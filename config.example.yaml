@@ -4,6 +4,9 @@ dataset:
   repository_revision: cfa3fce4595c1622bb2f8a38ae2ca9aae9eb685b
   input_path: null  # Kaggle attached .tgz/.zip or extracted directory; never downloaded locally
   allow_download: false
+  rgb_provider: huggingface  # dropbox is retained for legacy copies; its shared link has expired
+  mirror_repository: AIGeeksGroup/OpenEQA
+  mirror_revision: 9b127cf58e564fe2468bb140c10b20dd937a97f8
   min_free_gb: 15
   environment_selection: smallest  # choose the shortest present HM3D episode after inventory
   environments: 1
