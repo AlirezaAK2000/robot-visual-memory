@@ -22,7 +22,7 @@ MANUAL_ROUTE = (
     "Alternatively attach an existing RGB archive/extracted collection via Kaggle Add Input. "
     "Set ATTACHED_RGB (dataset.input_path) to its "
     "/kaggle/input/<dataset>/open-eqa-hm3d-frames-v0.tgz (or extracted directory), then rerun. "
-    "No simulator/depth/mesh is needed. Do not download this archive on the evaluation laptop."
+    "No simulator/depth/mesh is needed. Do not download this archive on the local laptop."
 )
 
 
@@ -237,14 +237,14 @@ def metadata_first(config, work):
 
 def select_environments(rows, config, *, inventory=None):
     ds = config["dataset"]
-    if ds.get("environment_selection") == "smallest":
-        from .episode_selection import select_shortest_episode
+    if ds.get("environment_selection") in {"smallest", "largest"}:
+        from .episode_selection import select_episode_by_length
 
         if ds["environments"] != 1:
-            raise ValueError("smallest selection operates on exactly one episode")
+            raise ValueError("episode length selection operates on exactly one episode")
         if inventory is None:
-            raise ValueError("inventory episode frame counts before selecting the shortest episode")
-        return [select_shortest_episode(inventory)]
+            raise ValueError("inventory episode frame counts before selecting an episode by length")
+        return [select_episode_by_length(inventory, ds["environment_selection"])]
     available = sorted({r["episode_history"] for r in rows if r["episode_history"].startswith("hm3d-v0/")})
     requested = ds.get("environment_ids", [])
     if requested:
@@ -252,8 +252,8 @@ def select_environments(rows, config, *, inventory=None):
             raise ValueError("environment_ids must be unique HM3D episode_history values from metadata")
         return list(requested)
     n = ds["environments"]
-    if not 2 <= n <= len(available):
-        raise ValueError("select at least one development and one evaluation environment")
+    if not 1 <= n <= len(available):
+        raise ValueError("select one or more available environments")
     return list(np.random.default_rng(config["seed"]).choice(available, n, replace=False))
 
 
@@ -385,7 +385,7 @@ def prepare_gallery(paths_by_env, qa_rows, environments, config, bundle):
 
     bundle = Path(bundle)
     ds = config["dataset"]
-    single_episode = ds.get("environment_selection") == "smallest"
+    single_episode = ds.get("environment_selection") in {"smallest", "largest"}
     if single_episode and len(environments) != 1:
         raise ValueError("single-episode mode requires exactly one selected environment")
     if single_episode and ds.get("frame_sampling") != "disjoint_windows":
@@ -446,14 +446,9 @@ def prepare_gallery(paths_by_env, qa_rows, environments, config, bundle):
                     source_sha256=file_hash(path),
                     image_sha256=file_hash(output),
                     dhash=dhash(image),
-                    split="evaluation"
-                    if single_episode
-                    else "development"
-                    if env == environments[0]
-                    else "evaluation",
                 )
             )
-    questions, answers = [], []
+    questions = []
     for row in qa_rows:
         env = row["episode_history"]
         if env not in environments:
@@ -465,39 +460,26 @@ def prepare_gallery(paths_by_env, qa_rows, environments, config, bundle):
                 environment_id=env,
                 episode_history=env,
                 category=row["category"],
-                split="evaluation"
-                if single_episode
-                else "development"
-                if env == environments[0]
-                else "evaluation",
             )
-        )
-        answers.append(
-            {
-                "query_id": row["question_id"],
-                "reference_answer": row["answer"],
-                "extra_answers": row.get("extra_answers", []),
-            }
         )
     atomic_json(bundle / "frames.json", [f.model_dump() for f in frames])
     atomic_json(bundle / "questions.json", [q.model_dump() for q in questions])
-    atomic_json(bundle / "annotation/reference_answers.json", answers)
     atomic_json(
         bundle / "selection.json",
         {
             "config": portable_config(config),
             "environment_order": environments,
-            "development_environment": None if single_episode else environments[0],
-            "evaluation_scope": "single_episode_exploratory" if single_episode else "held_out_environments",
-            "policy": "lowest positive collected RGB frame count; ties by episode_history"
+            "policy": (
+                "highest collected RGB frame count; ties by episode_history"
+                if ds.get("environment_selection") == "largest"
+                else "lowest positive collected RGB frame count; ties by episode_history"
+            )
             if single_episode
             else "seeded metadata environment sample",
             "frame_sampling": ds.get("frame_sampling", "linspace"),
             "time_axis": "sequence_index (RGB archive has no verified timestamps)",
             "original_frame_counts": {env: len(paths_by_env[env]) for env in environments},
-            "pilot_frame_ids": [f.frame_id for f in frames[:3]]
-            if single_episode
-            else [f.frame_id for f in frames if f.split == "development"][:3],
+            "pilot_frame_ids": [f.frame_id for f in frames[:3]],
             "preprocessing": {
                 "exif_transpose": True,
                 "resize": "aspect-preserving LANCZOS thumbnail",

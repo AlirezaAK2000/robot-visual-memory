@@ -14,3 +14,6 @@ data/
 results/
 dist/
 *.egg-info/
+
+# Original paid results remain local.
+*-results-backup.zip

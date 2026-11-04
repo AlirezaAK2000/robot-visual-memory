@@ -2,14 +2,12 @@ import io
 import tarfile
 import zipfile
 
-import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from rvm.annotation import annotation_status, load_qrels, save_qrels, validate_qrels
 from rvm.bundle import validate_bundle
 from rvm.io import atomic_json, export_zip, portable, read_json, safe_extract, write_checksums
-from rvm.schemas import Extraction, Judgment
+from rvm.schemas import Extraction
 
 
 def graph():
@@ -51,30 +49,16 @@ def test_export_roundtrip_images_and_relative_paths(fixture_bundle, tmp_path):
         assert not frame.image_relpath.startswith("/")
 
 
-@pytest.mark.parametrize(
-    "fault", ["missing-image", "vector-id", "nan", "dimension", "duplicate-record", "caption-source"]
-)
+@pytest.mark.parametrize("fault", ["missing-image", "duplicate-record", "caption-source"])
 def test_bad_bundle_rejected(fixture_bundle, fault):
     if fault == "missing-image":
         next((fixture_bundle / "images").glob("*.jpg")).unlink()
-    elif fault == "vector-id":
-        mapping = read_json(fixture_bundle / "vector_frame_ids.json")
-        mapping.reverse()
-        atomic_json(fixture_bundle / "vector_frame_ids.json", mapping)
-    elif fault in {"nan", "dimension"}:
-        vectors = np.load(fixture_bundle / "caption_vectors.npy")
-        if fault == "nan":
-            vectors[0, 0] = np.nan
-        else:
-            vectors = vectors[:, :2]
-        np.save(fixture_bundle / "caption_vectors.npy", vectors)
-    elif fault == "caption-source":
-        records = read_json(fixture_bundle / "records.json")
-        records[0]["extraction"]["caption"] = "Changed after vectors were computed"
-        atomic_json(fixture_bundle / "records.json", records)
     else:
         records = read_json(fixture_bundle / "records.json")
-        records.append(records[0])
+        if fault == "caption-source":
+            records[0]["extraction"]["caption"] = "Changed without sealing a new content contract"
+        else:
+            records.append(records[0])
         atomic_json(fixture_bundle / "records.json", records)
     write_checksums(fixture_bundle)
     with pytest.raises((ValueError, FileNotFoundError)):
@@ -105,41 +89,3 @@ def test_archive_symlink_and_expansion(tmp_path):
         tar.addfile(info, io.BytesIO(b"x" * 10))
     with pytest.raises(OSError):
         safe_extract(archive, tmp_path / "out", max_bytes=5)
-
-
-def test_unjudged_silver_and_all_zero_coverage(fixture_bundle):
-    bundle = validate_bundle(fixture_bundle)
-    frames, questions = bundle["frames"], bundle["questions"]
-    status = annotation_status(bundle["judgments"], frames, questions, synthetic=True)
-    assert [s["coverage"] for s in status] == ["has-evidence", "no-relevant"]
-    # Synthetic judgments must never satisfy a real human evaluation.
-    assert not any(s["complete"] for s in annotation_status(bundle["judgments"], frames, questions))
-    judgments = [
-        Judgment(
-            query_id=j.query_id,
-            frame_id=j.frame_id,
-            relevance=j.relevance,
-            source="human",
-            status="confirmed",
-        )
-        for j in bundle["judgments"]
-    ]
-    judgments[0] = judgments[0].model_copy(
-        update={"relevance": None, "source": "unjudged", "status": "unjudged"}
-    )
-    status = annotation_status(judgments, frames, questions)
-    assert not status[0]["complete"] and status[1]["complete"]
-    judgments[0] = judgments[0].model_copy(update={"relevance": 1, "source": "silver", "status": "proposed"})
-    assert not annotation_status(judgments, frames, questions)[0]["complete"]
-
-
-def test_wrong_environment_qrel_and_resumable_csv(fixture_bundle):
-    bundle = validate_bundle(fixture_bundle)
-    path = fixture_bundle / "annotation/qrels.csv"
-    judgments = load_qrels(path)
-    judgments[0].notes = "checked, useful partial evidence\nsecond line"
-    save_qrels(path, judgments)
-    assert load_qrels(path)[0].notes == judgments[0].notes
-    judgments[0] = judgments[0].model_copy(update={"frame_id": "synthetic-frame-3"})
-    with pytest.raises(ValueError, match="environment"):
-        validate_qrels(judgments, bundle["frames"], bundle["questions"])

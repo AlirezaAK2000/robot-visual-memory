@@ -57,9 +57,7 @@ def test_cypher_parameterization_environment_frame_and_connected_constraints():
 
 
 def test_plan_graph_types_and_no_shared_id_merge():
-    from rvm.ingestion import observation_id, point_id
-    import uuid
+    from rvm.ingestion import observation_id
 
     assert observation_id("e", "frame-1", "chair") != observation_id("e", "frame-2", "chair")
     assert observation_id("e1", "frame", "chair") != observation_id("e2", "frame", "chair")
-    assert str(uuid.UUID(point_id("frame"))) == point_id("frame")

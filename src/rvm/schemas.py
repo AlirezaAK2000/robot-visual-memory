@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "2.0"
 
 
 class StrictModel(BaseModel):
@@ -71,7 +71,13 @@ class Frame(StrictModel):
     source_sha256: str
     image_sha256: str
     dhash: str
-    split: Literal["development", "evaluation"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_metadata(cls, value):
+        # Accept saved exports without retaining obsolete experiment metadata.
+        return {k: v for k, v in value.items() if k != "split"} if isinstance(value, dict) else value
+
     # Sequence indexes are not timestamps. RGB-only archive has no verified clock.
     timestamp: float | None = None
 
@@ -88,26 +94,12 @@ class Question(StrictModel):
     environment_id: str
     episode_history: str
     category: str
-    split: Literal["development", "evaluation"]
 
-
-class Judgment(StrictModel):
-    query_id: str
-    frame_id: str
-    relevance: Literal[0, 1] | None
-    source: Literal["human", "silver", "synthetic", "unjudged"]
-    status: Literal["confirmed", "proposed", "unjudged"]
-    notes: str = ""
-
-    @model_validator(mode="after")
-    def valid_status(self):
-        if self.status == "unjudged" and self.relevance is not None:
-            raise ValueError("unjudged must have null relevance")
-        if self.status == "confirmed" and (
-            self.source not in {"human", "synthetic"} or self.relevance is None
-        ):
-            raise ValueError("confirmed judgments require human/synthetic source and binary relevance")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_metadata(cls, value):
+        # Accept saved exports without retaining obsolete experiment metadata.
+        return {k: v for k, v in value.items() if k != "split"} if isinstance(value, dict) else value
 
 
 class Anchor(StrictModel):

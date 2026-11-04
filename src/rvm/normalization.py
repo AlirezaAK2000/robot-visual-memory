@@ -1,9 +1,12 @@
-"""Frozen pilot vocabulary. Edit only using the development environment, then freeze."""
+"""Deterministic search normalization; raw extraction text is always preserved."""
 
 import re
 
 SYNONYMS = {
     "couch": "sofa",
+    "bannister": "handrail",
+    "banister": "handrail",
+    "stairs": "staircase",
     "settee": "sofa",
     "television": "tv",
     "television set": "tv",
@@ -15,9 +18,6 @@ SYNONYMS = {
     "electric kettle": "kettle",
     "cupboard": "cabinet",
     "washbasin": "sink",
-    "coffee table": "table",
-    "dining table": "table",
-    "armchair": "chair",
     "bookcase": "bookshelf",
     "grey": "gray",
     "wooden": "wood",
@@ -106,11 +106,60 @@ def canonical(text):
     return SYNONYMS.get(value, value)
 
 
+LABEL_PARENTS = {"armchair": "chair", "coffee table": "table", "dining table": "table"}
+UNKNOWN = {"", "unknown", "none", "null", "not visible", "unclear", "unspecified"}
+STATE_ALIASES = {"lit": "illuminated", "partly visible": "partially visible", "dark screen": "screen dark"}
+
+
+def search_values(value):
+    """Keep exact descriptions; add conservative component terms for simple phrases.
+
+    Uncertain alternatives/likeness remain exact phrases. No inferred color, material or state.
+    """
+    value = canonical(value)
+    if value in UNKNOWN:
+        return []
+    terms = {value}
+    if not re.search(r"\b(or|like|possibly|perhaps|appears|maybe)\b", value):
+        terms.update(word for word in value.split() if word in ATTRIBUTES)
+    return sorted(terms)
+
+
 def object_properties(obj):
+    label = canonical(obj.label)
     return {
-        "label": canonical(obj.label),
-        "attributes": sorted({canonical(a.value) for a in obj.attributes if a.value is not None}),
-        "states": sorted({canonical(s) for s in obj.states}),
+        "label": label,
+        "raw_label": obj.label,
+        "labels": sorted(
+            {
+                label,
+                LABEL_PARENTS.get(label, label),
+                " ".join(re.sub(r"[^a-z0-9 ]+", " ", obj.label.lower()).split()),
+            }
+        ),
+        "attributes": sorted(
+            {v for a in obj.attributes if a.value is not None for v in search_values(a.value)}
+        ),
+        "attribute_pairs": sorted(
+            {
+                canonical(a.name) + "=" + canonical(a.value)
+                for a in obj.attributes
+                if a.value is not None and canonical(a.value) not in UNKNOWN
+            }
+        ),
+        "states": sorted(
+            {STATE_ALIASES.get(canonical(s), canonical(s)) for s in obj.states if canonical(s) not in UNKNOWN}
+        ),
+        "raw_states": obj.states,
+    }
+
+
+def graph_vocabulary(records):
+    properties = [object_properties(o) for r in records for o in r.extraction.objects]
+    return {
+        "labels": sorted({v for p in properties for v in p["labels"]}),
+        "attributes": sorted({v for p in properties for v in p["attributes"]}),
+        "states": sorted({v for p in properties for v in p["states"]}),
     }
 
 
@@ -123,6 +172,9 @@ def rules_hash():
             "vocabulary": sorted(OBJECT_VOCABULARY),
             "attributes": sorted(ATTRIBUTES),
             "states": sorted(STATES),
-            "version": 1,
+            "version": 2,
+            "states_aliases": STATE_ALIASES,
+            "label_parents": LABEL_PARENTS,
+            "implementation": __import__("pathlib").Path(__file__).read_text(),
         }
     )

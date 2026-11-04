@@ -147,8 +147,7 @@ def test_real_gallery_path_caps_a_long_synthetic_sequence(tmp_path):
     assert read_json(tmp_path / "bundle/selection.json")["pilot_frame_ids"] == [
         f.frame_id for f in frames[:3]
     ]
-    assert all(f.split == "evaluation" and f.environment_id == env for f in frames)
-    assert questions[0].split == "evaluation"
+    assert all(f.environment_id == env for f in frames)
     windows = read_json(tmp_path / "bundle/sampling_windows.json")
     assert windows[0]["start_index"] == 0 and windows[-1]["end_index_exclusive"] == 417
     assert [f.sequence_index for f in frames] == [w["selected_index"] for w in windows]
@@ -158,9 +157,7 @@ def test_real_gallery_path_caps_a_long_synthetic_sequence(tmp_path):
 def test_single_episode_bundle_and_corruption(tmp_path, fault):
     root = create_single_episode_fixture(tmp_path / "bundle", config_path=ROOT / "config.example.yaml")
     bundle = validate_bundle(root)
-    assert bundle["manifest"]["evaluation_scope"] == "single_episode_exploratory"
     assert len(bundle["frames"]) == 5 and len({f.environment_id for f in bundle["frames"]}) == 1
-    assert all(f.split == "evaluation" for f in bundle["frames"])
     if fault == "windows":
         path = root / "sampling_windows.json"
         rows = read_json(path)

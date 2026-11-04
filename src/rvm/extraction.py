@@ -109,6 +109,7 @@ class StructuredRunner:
                 start = time.perf_counter()
                 raw, usage, error = None, None, None
                 try:
+                    # Presentation: one structured vision request yields a caption and scene graph.
                     response = self.client.responses.create(
                         model=self.settings["model"],
                         store=False,

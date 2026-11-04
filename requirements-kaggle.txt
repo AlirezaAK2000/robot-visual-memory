@@ -1,3 +1,2 @@
-# Install with --no-deps to preserve Kaggle's existing PyTorch/CUDA runtime.
--r requirements-kaggle.lock
-# Then: python -m pip install --no-deps -e .
+# Install with --no-deps in Kaggle.
+-r requirements-core.lock

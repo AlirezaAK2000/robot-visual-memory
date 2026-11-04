@@ -103,13 +103,22 @@ def inventory_episodes(source, qa_rows, config):
     return rows, summary
 
 
-def select_shortest_episode(inventory):
+def select_episode_by_length(inventory, selection_mode="smallest"):
     if not inventory or any(r["frame_count"] <= 0 for r in inventory):
         raise ValueError("Inventory must contain positive frame counts")
-    return min(inventory, key=lambda r: (r["frame_count"], r["environment_id"]))["environment_id"]
+    if len({r["environment_id"] for r in inventory}) != len(inventory):
+        raise ValueError("Inventory episode IDs must be unique")
+    if selection_mode not in {"smallest", "largest"}:
+        raise ValueError("Episode length selection must be smallest or largest")
+    sign = 1 if selection_mode == "smallest" else -1
+    return min(inventory, key=lambda r: (sign * r["frame_count"], r["environment_id"]))["environment_id"]
 
 
-def save_inventory(inventory, summary, directory, *, synthetic=False):
+def select_shortest_episode(inventory):
+    return select_episode_by_length(inventory, "smallest")
+
+
+def save_inventory(inventory, summary, directory, *, synthetic=False, selection_mode="smallest"):
     """Standalone CSV + JSON + PNG histogram, with exact counts available for review."""
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -117,7 +126,7 @@ def save_inventory(inventory, summary, directory, *, synthetic=False):
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    selected = select_shortest_episode(inventory)
+    selected = select_episode_by_length(inventory, selection_mode)
     selected_count = next(r["frame_count"] for r in inventory if r["environment_id"] == selected)
     counts = np.array([r["frame_count"] for r in inventory], dtype=int)
     atomic_json(
@@ -127,6 +136,7 @@ def save_inventory(inventory, summary, directory, *, synthetic=False):
             "episodes": inventory,
             "selected_episode": selected,
             "selected_frame_count": selected_count,
+            "selection_mode": selection_mode,
             "synthetic": synthetic,
         },
     )
@@ -146,7 +156,10 @@ def save_inventory(inventory, summary, directory, *, synthetic=False):
     ax = fig.subplots()
     frequencies, edges, _ = ax.hist(counts, bins=bins, color="#3476b4", edgecolor="white")
     ax.axvline(
-        selected_count, color="#c13831", linestyle="--", label=f"Selected shortest: {selected_count} frames"
+        selected_count,
+        color="#c13831",
+        linestyle="--",
+        label=f"Selected {'shortest' if selection_mode == 'smallest' else 'longest'}: {selected_count} frames",
     )
     ax.set(
         xlabel="Original RGB frames per episode (before sampling)",
@@ -173,6 +186,7 @@ def disjoint_window_sample(frame_count, max_frames=200):
     """
     if frame_count < 1 or not 1 <= max_frames <= 200:
         raise ValueError("positive frame count and max_frames in 1..200 required")
+    # Presentation: evenly cover the recording with one midpoint per disjoint window.
     boundaries = np.linspace(0, frame_count, min(frame_count, max_frames) + 1, dtype=int)
     return [
         {
@@ -262,15 +276,23 @@ def make_preview_video(paths, target, *, sequence_indexes=None, fps=6, synthetic
 def validate_single_episode_sampling(root, selection, frames):
     """Keep selection, histogram, window provenance, gallery and preview aligned on import."""
     root = Path(root)
+    if not (root / "review/episode_inventory.json").is_file():
+        raise ValueError(
+            "Bundle review inventory is missing. Restore inventory/histogram metadata before import; "
+            "a manual longest-episode backup can be recovered with rvm recover-longest."
+        )
     inventory = read_json(root / "review/episode_inventory.json")
     rows = inventory["episodes"]
     env = frames[0].environment_id
+    mode = selection["config"]["dataset"].get("environment_selection", "smallest")
+    if inventory.get("selection_mode", "smallest") != mode:
+        raise ValueError("inventory selection mode differs from saved configuration")
     if (
         not rows
         or len({r["environment_id"] for r in rows}) != len(rows)
-        or select_shortest_episode(rows) != env
+        or select_episode_by_length(rows, mode) != env
     ):
-        raise ValueError("selected episode is not the shortest unique inventoried episode")
+        raise ValueError(f"selected episode does not match {mode} selection over unique inventoried episodes")
     if inventory["selected_episode"] != env:
         raise ValueError("inventory-selected episode differs from gallery")
     original_count = next(r["frame_count"] for r in rows if r["environment_id"] == env)

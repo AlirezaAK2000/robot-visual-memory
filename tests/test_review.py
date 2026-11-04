@@ -54,3 +54,31 @@ def test_review_rejects_missing_outputs_and_changed_images_and_marks_synthetic(t
     (root / frames[0].image_relpath).write_bytes(b"changed")
     with pytest.raises(ValueError, match="image hash mismatch"):
         extraction_review_html(frames, records, root, model="test-model")
+
+
+def test_custom_search_reuses_saved_evidence_and_closes_each_connection(fixture_bundle, monkeypatch):
+    from unittest.mock import Mock
+    from rvm.bundle import validate_bundle
+    from rvm.notebook import GallerySearch
+    from rvm.planning import RulesPlanner
+    from rvm.schemas import Hit, RetrievalResult
+
+    bundle = validate_bundle(fixture_bundle)
+    drivers = [Mock(), Mock()]
+    outputs = []
+    monkeypatch.setattr("rvm.notebook.clients", Mock(side_effect=drivers))
+    monkeypatch.setattr("rvm.notebook.display", outputs.append)
+    retriever = Mock()
+    retriever.retrieve.return_value = RetrievalResult(
+        hits=[Hit(frame_id=bundle["frames"][0].frame_id, score=2, diagnostics={"matched": ["anchor:0"]})],
+        diagnostics={"error": None},
+    )
+    monkeypatch.setattr("rvm.notebook.GraphRetriever", Mock(return_value=retriever))
+    gallery = GallerySearch(
+        bundle, RulesPlanner(), "test", "synthetic/dev", {"extraction": {"model": "saved"}, "retrieval": {}}
+    )
+    gallery.ask(["Where is the kettle?"])
+    gallery.ask(["Where is the kettle?"])
+    for driver in drivers:
+        driver.close.assert_called_once()
+    assert sum("synthetic-frame-0" in str(getattr(output, "data", "")) for output in outputs) == 2

@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def mock_metadata(monkeypatch, config, items):
+    # Tiny authored archives do not require the real dataset's 15 GiB reserve.
+    config["dataset"]["min_free_gb"] = 0
     payload = {"sha": config["dataset"]["mirror_revision"], "siblings": items}
     monkeypatch.setattr(
         "rvm.mirror.requests.get",

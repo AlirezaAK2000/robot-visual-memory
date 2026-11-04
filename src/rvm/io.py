@@ -163,17 +163,11 @@ def export_zip(root, target, *, show_progress=True):
         raise ValueError("ZIP must be outside bundle directory")
     allowed = {
         "images",
-        "annotation",
         "provenance",
-        "model_snapshot",
         "frames.json",
         "selection.json",
         "records.json",
         "questions.json",
-        "caption_vectors.npy",
-        "vector_frame_ids.json",
-        "embedding.json",
-        "development-freeze.json",
         "bundle.json",
         "checksums.json",
         "sampling_windows.json",

@@ -108,15 +108,15 @@ def test_dependency_snapshot_reads_loaded_modules_without_importing_them(monkeyp
         SimpleNamespace(
             modules={
                 "numpy": SimpleNamespace(__version__="old-numpy"),
-                "sklearn": SimpleNamespace(__version__="old-sklearn"),
+                "pandas": SimpleNamespace(__version__="old-pandas"),
                 "PIL": SimpleNamespace(__version__="old-pillow"),
-                "transformers": SimpleNamespace(),
+                "matplotlib": SimpleNamespace(),
             }
         ),
     )
     assert MODULE.loaded_dependency_versions() == {
         "numpy": "old-numpy",
-        "scikit-learn": "old-sklearn",
+        "pandas": "old-pandas",
         "Pillow": "old-pillow",
     }
 

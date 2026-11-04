@@ -16,13 +16,8 @@ def loaded_dependency_versions():
     """Inspect already imported dependencies without importing any scientific libraries."""
     names = {
         "numpy": "numpy",
-        "scipy": "scipy",
-        "sklearn": "scikit-learn",
         "pandas": "pandas",
         "PIL": "Pillow",
-        "sentence_transformers": "sentence-transformers",
-        "transformers": "transformers",
-        "tokenizers": "tokenizers",
     }
     return {
         distribution: str(module.__version__)

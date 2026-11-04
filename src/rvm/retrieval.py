@@ -1,14 +1,9 @@
-"""Exactly two retrieval pipelines. Both use database clients and explicit gallery/environment scopes."""
+"""Graph retrieval with explicit gallery/environment scopes and parameterized Cypher."""
 
 import time
-from typing import Protocol
 
 from .ingestion import database
 from .schemas import Hit, QueryPlan, RetrievalResult
-
-
-class Retriever(Protocol):
-    def retrieve(self, question: str, environment_id: str, k: int) -> RetrievalResult: ...
 
 
 def compile_plan(plan: QueryPlan, environment_id, collection, k, min_score=1.0):
@@ -34,11 +29,9 @@ def compile_plan(plan: QueryPlan, environment_id, collection, k, min_score=1.0):
             params,
         )
 
-    def exists(anchor_index, suffix, *, term=None, full=False):
+    def exists(anchor_index, *, full=False):
         label = f"$anchors[{anchor_index}].label"
-        constraints = [f"o.label = {label}", "o.environment_id=$env", "o.frame_id=f.frame_id"]
-        if term:
-            constraints.append(term)
+        constraints = [f"{label} IN o.labels", "o.environment_id=$env", "o.frame_id=f.frame_id"]
         if full:
             constraints.extend(
                 [
@@ -50,15 +43,16 @@ def compile_plan(plan: QueryPlan, environment_id, collection, k, min_score=1.0):
             "EXISTS { MATCH (f)-[:OBSERVES]->(o:ObjectObservation) WHERE " + " AND ".join(constraints) + " }"
         )
 
+    # Presentation: rank frames by visible object constraints and connected spatial relations.
     terms, explanations, label_checks = [], [], []
     for i, anchor in enumerate(plan.anchors):
-        check = exists(i, "label")
+        check = exists(i)
         label_checks.append(check)
         terms.append(f"CASE WHEN {check} THEN 2.0 ELSE 0.0 END")
         explanations.append(f"CASE WHEN {check} THEN ['anchor:{i}'] ELSE [] END")
         for field in ["attributes", "states"]:
             for j, _ in enumerate(getattr(anchor, field)):
-                check = exists(i, field, term=f"$anchors[{i}].{field}[{j}] IN o.{field}")
+                check = exists(i, full=True)
                 terms.append(f"CASE WHEN {check} THEN 1.0 ELSE 0.0 END")
                 explanations.append(f"CASE WHEN {check} THEN ['{field}:{i}:{j}'] ELSE [] END")
     for ri, relation in enumerate(plan.relationships):
@@ -73,13 +67,13 @@ def compile_plan(plan: QueryPlan, environment_id, collection, k, min_score=1.0):
             "b.frame_id=f.frame_id",
             "a.environment_id=$env",
             "b.environment_id=$env",
-            f"a.label=$anchors[{si}].label",
+            f"$anchors[{si}].label IN a.labels",
             f"r.predicate=$predicates[{ri}]",
         ]
         for var, idx in [("a", si), ("b", ti)]:
             if idx is not None:
                 if var == "b":
-                    constraints.append(f"b.label=$anchors[{idx}].label")
+                    constraints.append(f"$anchors[{idx}].label IN b.labels")
                 constraints.extend(
                     [
                         f"all(v IN $anchors[{idx}].attributes WHERE v IN {var}.attributes)",
@@ -151,78 +145,6 @@ class GraphRetriever:
                 hits=[],
                 diagnostics={
                     "total_seconds": time.perf_counter() - start,
-                    "database_seconds": db_seconds,
-                    "error": type(exc).__name__,
-                },
-            )
-
-
-class CaptionRetriever:
-    def __init__(self, qdrant, embedder, collection):
-        self.qdrant, self.embedder, self.collection = qdrant, embedder, collection
-
-    def retrieve(self, question, environment_id, k):
-        from qdrant_client import models as qm
-
-        if not 1 <= k <= 1000:
-            raise ValueError("k must be 1..1000")
-        start, embedding_seconds, db_seconds = time.perf_counter(), 0.0, 0.0
-        try:
-            vector = self.embedder.encode([question], query=True)[0]
-            embedding_seconds = time.perf_counter() - start
-            db_start = time.perf_counter()
-            environment_filter = qm.Filter(
-                must=[qm.FieldCondition(key="environment_id", match=qm.MatchValue(value=environment_id))]
-            )
-            # Small-gallery exact Qdrant search over the full environment gives deterministic tie
-            # handling even at the k boundary. No NumPy ranking is used in this retriever.
-            gallery_count = self.qdrant.count(
-                self.collection, count_filter=environment_filter, exact=True
-            ).count
-            if not gallery_count:
-                return RetrievalResult(
-                    hits=[],
-                    diagnostics={
-                        "total_seconds": time.perf_counter() - start,
-                        "embedding_seconds": embedding_seconds,
-                        "database_seconds": time.perf_counter() - db_start,
-                        "error": None,
-                    },
-                )
-            result = self.qdrant.query_points(
-                collection_name=self.collection,
-                query=vector.tolist(),
-                limit=gallery_count,
-                query_filter=environment_filter,
-                search_params=qm.SearchParams(exact=True),
-                with_payload=True,
-            )
-            db_seconds = time.perf_counter() - db_start
-            seen, hits = set(), []
-            # Sort Qdrant's scored full-gallery results by score then frame ID.
-            for p in sorted(result.points, key=lambda p: (-p.score, p.payload["frame_id"])):
-                if p.payload["environment_id"] != environment_id:
-                    raise ValueError("Qdrant returned wrong environment")
-                fid = p.payload["frame_id"]
-                if fid in seen:
-                    raise ValueError("duplicate vector frame result")
-                seen.add(fid)
-                hits.append(Hit(frame_id=fid, score=float(p.score)))
-            return RetrievalResult(
-                hits=hits[:k],
-                diagnostics={
-                    "total_seconds": time.perf_counter() - start,
-                    "embedding_seconds": embedding_seconds,
-                    "database_seconds": db_seconds,
-                    "error": None,
-                },
-            )
-        except Exception as exc:
-            return RetrievalResult(
-                hits=[],
-                diagnostics={
-                    "total_seconds": time.perf_counter() - start,
-                    "embedding_seconds": embedding_seconds,
                     "database_seconds": db_seconds,
                     "error": type(exc).__name__,
                 },

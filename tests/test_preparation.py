@@ -43,5 +43,5 @@ def test_selection_reproducible_and_answer_independent(tmp_path):
     assert [f.model_dump() for f in frames] == [f.model_dump() for f in frames2]
     assert all(f.width == 100 and f.height == 50 and f.timestamp is None for f in frames)
     assert [f.sequence_index for f in frames[:2]] == [0, 3]
-    assert read_json(tmp_path / "one/selection.json")["pilot_frame_ids"] == [f.frame_id for f in frames[:2]]
+    assert read_json(tmp_path / "one/selection.json")["pilot_frame_ids"] == [f.frame_id for f in frames[:3]]
     assert all(r["valid"] == 4 and not r["invalid"] for r in inspect_images(paths))

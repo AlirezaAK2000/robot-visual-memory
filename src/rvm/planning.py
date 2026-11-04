@@ -1,4 +1,4 @@
-"""Question-only query planning. No imports or arguments expose reference answers/qrels."""
+"""Question-only query planning. Plans use only the query and stored object vocabulary."""
 
 import re
 import time
@@ -55,6 +55,12 @@ class RulesPlanner:
     to the one mentioned anchor. No label-only substitution for unsupported questions.
     """
 
+    def __init__(self, vocabulary=None):
+        vocabulary = vocabulary or {}
+        self.labels = set(OBJECT_VOCABULARY) | set(vocabulary.get("labels", []))
+        self.attributes = set(ATTRIBUTES) | set(vocabulary.get("attributes", []))
+        self.states = set(STATES) | set(vocabulary.get("states", []))
+
     def plan(self, question):
         start = time.perf_counter()
         text = " ".join(re.sub(r"[^a-z0-9 ]", " ", question.lower()).split())
@@ -62,9 +68,10 @@ class RulesPlanner:
         for old, new in sorted(SYNONYMS.items(), key=lambda x: -len(x[0])):
             text = re.sub(r"\b" + re.escape(old) + r"\b", new, text)
         unsupported = bool(re.search(r"\b(not|never|without|absent|missing)\b", text))
+        # Presentation: match the question against labels actually available in visual memory.
         mentions = []
         occupied = set()
-        for term in sorted(OBJECT_VOCABULARY, key=lambda x: (-len(x.split()), x)):
+        for term in sorted(self.labels, key=lambda x: (-len(x.split()), x)):
             for match in re.finditer(r"\b" + re.escape(term) + r"s?\b", text):
                 if not any(i in occupied for i in range(match.start(), match.end())):
                     mentions.append((match.start(), match.end(), term))
@@ -72,15 +79,32 @@ class RulesPlanner:
         mentions.sort()
         mentions = mentions[:6]
         anchors = []
+
+        def phrases(segment, vocabulary):
+            found, occupied = [], set()
+            for value in sorted(vocabulary, key=lambda v: (-len(v), v)):
+                for match in re.finditer(r"\b" + re.escape(value) + r"\b", segment):
+                    if not any(j in occupied for j in range(match.start(), match.end())):
+                        found.append((match.start(), value))
+                        occupied.update(range(match.start(), match.end()))
+            return [value for _, value in sorted(found)]
+
         for i, (begin, end, term) in enumerate(mentions):
             preceding = text[mentions[i - 1][1] if i else 0 : begin].split()[-3:]
             following = text[end : mentions[i + 1][0] if i + 1 < len(mentions) else len(text)].split()[:3]
-            # Exclude relational 'on' from state attachment; on/off states need GPT for disambiguation.
+            before = " ".join(preceding)
+            after = " ".join(following)
+            state_terms = phrases(before, self.states - {"on", "off"})
+            # Post-nominal state questions: "is the door open?" / "is the TV on?".
+            # Do not attach 'on' when it introduces a following object or location.
+            if i == len(mentions) - 1:
+                tail = after.strip()
+                state_terms += [v for v in phrases(tail, self.states) if tail == v or tail == "is " + v]
             anchors.append(
                 Anchor(
                     label=canonical(term),
-                    attributes=[v for v in preceding if v in ATTRIBUTES],
-                    states=[v for v in preceding + following if v in STATES - {"on", "off"}],
+                    attributes=phrases(before, self.attributes),
+                    states=list(dict.fromkeys(state_terms)),
                 )
             )
         relations = []
@@ -96,8 +120,9 @@ class RulesPlanner:
             (r"\b(behind)\b", "in_front_of", "in"),
         ]
         spans = []
-        for pattern, pred, direction in sorted(patterns, key=lambda p: -len(p[0])):
+        for pattern, pred, default_direction in sorted(patterns, key=lambda p: -len(p[0])):
             for m in re.finditer(pattern, text):
+                direction = default_direction
                 if any(m.start() < b and m.end() > a for a, b in spans):
                     continue
                 spans.append(m.span())
@@ -110,6 +135,8 @@ class RulesPlanner:
                     direction = {"out": "in", "in": "out", "either": "either"}[direction]
                 else:
                     continue
+                if pred == "on" and target is None and "on" in anchors[source].states:
+                    continue
                 relations.append(
                     PlanRelation(source=source, predicate=Predicate(pred), target=target, direction=direction)
                 )
@@ -119,6 +146,7 @@ class RulesPlanner:
         return validate_grounding(normalize_plan(plan), question), {
             "parser": "rules",
             "rules_hash": rules_hash(),
+            "unparsed_terms_notice": "Only explicit labels, attributes and supported relationships are parsed; inspect the plan for omitted context.",
             "cache_hit": False,
             "planning_seconds": time.perf_counter() - start,
             "unsupported": unsupported or not anchors,
