@@ -36,11 +36,17 @@ flowchart LR
 2. **Structure visual observations.** One VLM request per uncached frame produces a caption and a scene graph. Cached results survive reruns, and a three-frame preview makes extraction quality visible early.
 3. **Build graph memory.** Store environments, frames, and object observations in Neo4j. Objects retain attributes and states; directed edges describe `left_of`, `above`, `near`, `on`, `inside`, and `in_front_of`.
 4. **Interpret the question.** An offline rules planner resolves known synonyms and identifies labels, attributes, states, and relationships using the stored vocabulary.
-5. **Retrieve evidence.** Parameterized Cypher searches the selected episode. Object matches earn 2 points, attribute/state constraints 1 each, and connected relationship matches 3. Results include the matched constraints and original images. Ties use frame ID order.
+5. **Retrieve evidence.** Parameterized Cypher ranks frames from the selected episode and returns their matched constraints and original images.
 
 Objects are scoped to individual frames: seeing a chair twice creates two observations rather than assuming a shared physical identity. The graph therefore represents **what was observed**, with a traceable link back to the image.
 
 The recorded pilot uses one **400-frame episode sampled to 200 frames**, containing **2,113 object observations** and **2,036 relationships**. It demonstrates graph retrieval without vector search or relevance benchmarking.
+
+## Frame ranking
+
+Frames receive a weighted graph-match score: **S = 2O + A + 3R**, where **O** counts matched object anchors, **A** counts matched attribute/state constraints, and **R** counts matched spatial relationships. Each query constraint contributes once. Attribute/state points require one object observation to satisfy all its anchor’s qualifiers; relationship points require connected objects satisfying their qualifiers in the same frame. Frames matching at least one anchor are ranked by descending score, with frame ID breaking ties. The score permits partial matches and is not an answer-confidence probability.
+
+For **“white sofa near window”**, a frame containing a white sofa, a window, and their `near` relationship scores **8**: 2 for each object, 1 for white, and 3 for the relationship. A frame containing both objects and the white attribute without the matching relationship scores **5**; a white sofa alone scores **3**. More complete graph matches therefore rank higher, while partial evidence can still appear.
 
 ## Code to present
 
@@ -60,8 +66,7 @@ The [recorded Kaggle run](notebooks/01_prepare_openeqa_kaggle.ipynb) preserves t
 
 ## Limitations
 
-- **Single-episode prototype.** The recorded examples demonstrate behavior, not measured retrieval quality or deployment on a physical robot.
-- **Extraction and sampling can miss evidence.** VLM labels and spatial edges can be incomplete or incorrect; inspect the returned images.
+- **Extraction and sampling can miss evidence.** VLM labels and spatial edges can be incomplete or incorrect.
 - **Language coverage is limited.** The rules parser can omit qualifiers such as “front” and “upstairs” and cannot reliably interpret activities, affordances, or negation.
 - **Partial matches are allowed.** A returned frame or its score is not a generated answer or a calibrated confidence value.
 - **No global spatial map.** There is no cross-frame object tracking, verified capture timing, camera pose, or 3D localization. Spatial directions are image-relative.
