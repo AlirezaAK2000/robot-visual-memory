@@ -4,20 +4,24 @@
 
 ## See it in action
 
-Ask a question about a previously explored environment:
+**Example 3: “Is the upstairs TV on?”** from the [executed retrieval notebook](notebooks/02_graph_retrieval_local.ipynb):
 
 ```python
-MY_QUESTIONS = ["where is the faucet?"]
-my_results = gallery.ask(MY_QUESTIONS, k=5)
+MY_QUESTIONS = ["Is the upstairs TV on?"]
+my_results = gallery.ask(MY_QUESTIONS, k=2)
 ```
 
-The [executed retrieval notebook](notebooks/02_graph_retrieval_local.ipynb) interprets this as an object anchor, `faucet`, and searches the episode’s graph. The saved run returned five frames with the matched constraint **Object: faucet**, each scoring **2.0** for object presence.
+The local parser creates an object anchor `tv` with the requested state `on`. It does not encode “upstairs.” Below are the **top two frames from the saved notebook ranking**. Both scored **2.0** for **Object: tv**; neither matched the `on` state. Their scores tie, so frame ID determines their order.
 
-![A retrieved kitchen view showing the faucet below the window](assets/faucet-retrieval.jpg)
+| Rank 1 — score 2.0 | Rank 2 — score 2.0 |
+|---|---|
+| ![First-ranked frame showing a dark television on a cabinet beside a railing](assets/upstairs-tv-rank-1.jpg) | ![Second-ranked frame showing a television and sofas in the living room](assets/upstairs-tv-rank-2.jpg) |
+| Frame `0a59b93e5b178772a02882b7ecccfba1` · sequence index 42 | Frame `0b7afe3defe2ff1e243a8bb43e5accc8` · sequence index 28 |
+| Extracted TV state: `screen dark` | TV state: not reported |
 
-*An actual returned frame from the saved run: rank 2, frame `0e863149e3a71d40e5a0d8c164740822`. Imagery: OpenEQA / HM3D.*
+*Images are copied directly from the saved Example 3 outputs. Imagery: OpenEQA / HM3D.*
 
-The frame’s extracted graph also contains **`faucet → on → sink`**. The notebook displays the image, caption, object attributes, and relationships together. This particular question uses object presence; questions with supported spatial phrases can additionally match connected relationships.
+The notebook pairs each image with its caption, objects, states, relationships, and matched constraints. These partial matches provide visual evidence for inspection; they do not establish the upstairs location or answer whether the TV is powered on.
 
 ## From observation to retrieval
 
@@ -35,8 +39,8 @@ flowchart LR
 1. **Cover the recording.** Split the ordered sequence into disjoint windows and retain one midpoint per window, with a maximum of 200 frames. Review the sampled video before extraction.
 2. **Structure visual observations.** One VLM request per uncached frame produces a caption and a scene graph. Cached results survive reruns, and a three-frame preview makes extraction quality visible early.
 3. **Build graph memory.** Store environments, frames, and object observations in Neo4j. Objects retain attributes and states; directed edges describe `left_of`, `above`, `near`, `on`, `inside`, and `in_front_of`.
-4. **Interpret the question.** An offline rules planner resolves known synonyms and identifies labels, attributes, states, and relationships using the stored vocabulary.
-5. **Retrieve evidence.** Parameterized Cypher ranks frames from the selected episode and returns their matched constraints and original images.
+4. **Interpret the question.** A local, rule-based Python parser resolves known synonyms and identifies labels, attributes, states, and relationships using the stored vocabulary. Query parsing makes no LLM calls.
+5. **Retrieve evidence.** Python code constructs parameterized Cypher with our scoring rules. Neo4j executes the graph matches, calculates scores, and sorts frames from the selected episode, returning matched constraints and original images.
 
 Objects are scoped to individual frames: seeing a chair twice creates two observations rather than assuming a shared physical identity. The graph therefore represents **what was observed**, with a traceable link back to the image.
 
@@ -44,7 +48,7 @@ The recorded pilot uses one **400-frame episode sampled to 200 frames**, contain
 
 ## Frame ranking
 
-Frames receive a weighted graph-match score: **S = 2O + A + 3R**, where **O** counts matched object anchors, **A** counts matched attribute/state constraints, and **R** counts matched spatial relationships. Each query constraint contributes once. Attribute/state points require one object observation to satisfy all its anchor’s qualifiers; relationship points require connected objects satisfying their qualifiers in the same frame. Frames matching at least one anchor are ranked by descending score, with frame ID breaking ties. The score permits partial matches and is not an answer-confidence probability.
+Frames receive a custom, application-defined graph-match score: **S = 2O + A + 3R**, where **O** counts matched object anchors, **A** counts matched attribute/state constraints, and **R** counts matched spatial relationships. Each query constraint contributes once. Attribute/state points require one object observation to satisfy all its anchor’s qualifiers; relationship points require connected objects satisfying their qualifiers in the same frame. Frames matching at least one anchor are ranked by descending score, with frame ID breaking ties. The score permits partial matches and is not an answer-confidence probability.
 
 For **“white sofa near window”**, a frame containing a white sofa, a window, and their `near` relationship scores **8**: 2 for each object, 1 for white, and 3 for the relationship. A frame containing both objects and the white attribute without the matching relationship scores **5**; a white sofa alone scores **3**. More complete graph matches therefore rank higher, while partial evidence can still appear.
 
