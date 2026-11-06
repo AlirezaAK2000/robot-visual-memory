@@ -66,7 +66,7 @@ The key steps are marked with brief `# Presentation:` comments in the code.
 
 The [retrieval notebook](notebooks/02_graph_retrieval_local.ipynb) contains original episode questions and an editable **Ask your own questions** cell. Display and connection management live in a small [notebook helper](src/rvm/notebook.py), keeping the presentation cells short.
 
-The [recorded Kaggle run](notebooks/01_prepare_openeqa_kaggle.ipynb) preserves the original outputs, including historical annotation and embedding stages. It is an execution record; use the [current graph preparation notebook](notebooks/01_prepare_graph_kaggle.ipynb) for new runs.
+The [Kaggle preparation notebook](notebooks/01_prepare_openeqa_kaggle.ipynb) is the notebook used for the pilot. Its original outputs remain intact, including historical annotation and embedding stages from the original preparation environment.
 
 ## Limitations
 
@@ -91,7 +91,7 @@ cp .env.example .env
 
 Set `NEO4J_PASSWORD` in `.env` to at least eight characters. Graph retrieval uses the saved extractions and does not require an OpenAI API key. A key is needed only for new VLM extraction.
 
-**Prepare the data.** Run [01_prepare_graph_kaggle.ipynb](notebooks/01_prepare_graph_kaggle.ipynb) on Kaggle with Internet enabled. It checks out the repository directly into `/kaggle/working`, inventories episodes, samples frames, and exports the graph bundle. Set the review/extraction flags only after inspecting the previews. No GPU is required.
+**Data preparation.** [01_prepare_openeqa_kaggle.ipynb](notebooks/01_prepare_openeqa_kaggle.ipynb) records the Kaggle acquisition, frame sampling, and VLM extraction used for this pilot. Use the exported results from that run for the local steps below. The recorded notebook includes legacy annotation and embedding cells that are no longer part of the current graph retrieval package.
 
 Official question metadata comes from [OpenEQA](https://github.com/facebookresearch/open-eqa). The recorded RGB acquisition used a pinned [third-party episode mirror](https://huggingface.co/datasets/AIGeeksGroup/OpenEQA); byte identity with the unavailable original archive is unverified. Source revisions and acquisition provenance are retained in the bundle.
 
